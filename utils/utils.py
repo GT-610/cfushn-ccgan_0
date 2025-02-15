@@ -4,20 +4,48 @@ Some helpful functions
 """
 import numpy as np
 import torch
-import torch.nn as nn
-import torchvision
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-from torch.nn import functional as F
 import sys
-import PIL
-from PIL import Image
 
+from config.constants import device
+
+
+# -------------------- 工具函数：标签归一化与反归一化 --------------------
+def fn_norm_labels(labels,max_label):
+    """
+    将未归一化的标签转换到 [0,1] 区间
+
+    参数:
+        labels (np.ndarray): 原始标签数组
+
+    返回:
+        np.ndarray: 归一化后的标签数组（除以 args.max_label）
+    """
+    return labels / max_label
+
+
+def fn_denorm_labels(labels,max_label):
+    """
+    将归一化的标签还原为原始尺度
+
+    参数:
+        labels (np.ndarray 或 torch.Tensor 或数字): 归一化后的标签
+
+    返回:
+        与输入类型对应的标签，数值范围恢复到 [0, max_label]
+    """
+    if isinstance(labels, np.ndarray):
+        return (labels * max_label).astype(int)
+    elif torch.is_tensor(labels):
+        return (labels * max_label).type(torch.int)
+    else:
+        return int(labels * max_label)
 
 
 # ################################################################################
 # Progress Bar
-class SimpleProgressBar():
+class SimpleProgressBar:
     def __init__(self, width=50):
         self.last_x = -1
         self.width = width

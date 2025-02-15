@@ -14,6 +14,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from config.constants import device
+
 # -------------------- 全局参数设置 --------------------
 NC = 3            # 图像通道数，通常RGB图像为3
 IMG_SIZE = 64     # 输入图像尺寸（假设图像为64x64像素）

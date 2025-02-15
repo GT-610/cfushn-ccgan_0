@@ -11,7 +11,7 @@ import torch
 from torch import nn
 from torch.nn.utils import spectral_norm
 
-from utils.constants import device
+from config.constants import device
 
 channels = 3
 bias = True
