@@ -1,40 +1,22 @@
-import sys
-
-print("\n========================================================================================")
-
-# -------------------- 导入第三方包 --------------------
 import copy  # 深拷贝对象
 import gc  # 垃圾回收工具
 
-import matplotlib.pyplot as plt  # 绘图
-
-plt.switch_backend('agg')  # 使用非交互式后端
 import h5py  # 读取 HDF5 文件
-import os  # 文件与目录操作
 from tqdm import tqdm  # 显示进度条
-import timeit  # 计时工具
 
-# -------------------- 导入项目内部模块 --------------------
 from config.config import *
-
-from utils.utils import *  # 导入项目常用工具函数
-from utils.log_util import cy_log
+from models.ResNet_embed2 import *
+from models.sngan2 import *
+from train_ccgan2 import train_ccgan  # 导入 GAN 训练及采样函数
+from train_net_for_label_embed2 import *
 from utils.ipc_util import register_signal_handler, get_s1, get_s2
-from models.sngan import *
-from models.ResNet_embed import *
-from train_ccgan import train_ccgan  # 导入 GAN 训练及采样函数
-from train_net_for_label_embed import train_net_embed, train_net_y2h
+from utils.log_util import cy_log
+from utils.utils2 import *  # 导入项目常用工具函数
 
-#######################################################################################
-'''                                   Settings                                      '''
-#######################################################################################
-os.chdir(root_path)  # 切换到根路径
-
-# -------------------- 注册信号事件 --------------------
+# --------------------------- 注册信号事件; 并定义trap,根据信号执行操作 ---------------------------
 register_signal_handler()
 
 
-# -------------------- 定义trap,根据信号执行操作 --------------------
 def my_trap(signal_num: int):
     trigger = False
     if signal_num == 10:
@@ -48,124 +30,142 @@ def my_trap(signal_num: int):
         sys.exit(0)
 
 
-# -------------------- 设置随机种子，确保结果可复现 --------------------
-random.seed(seed)
-torch.manual_seed(seed)
-torch.backends.cudnn.deterministic = True
-cudnn.benchmark = False
-np.random.seed(seed)
-
-# -------------------- Embedding 部分超参数 --------------------
-base_lr_x2y = 0.01  # 用于训练 net_embed（图像到嵌入）的基础学习率
-base_lr_y2h = 0.01  # 用于训练 net_y2h（标签到嵌入）的基础学习率
-
-NGPU = torch.cuda.device_count()  # 当前可用的 GPU 数量
-
-# 如果指定了 torch 模型保存路径，则设置环境变量 TORCH_HOME
-if torch_model_path != "None":
-    os.environ['TORCH_HOME'] = torch_model_path
-
-#######################################################################################
-'''                                    Data loader                                 '''
-#######################################################################################
-# -------------------- 加载数据 --------------------
+# --------------------------- Data loader ---------------------------
+# ------ 加载数据 ------
 # 数据文件名：根据图像尺寸构造 h5 文件名（例如 UTKFace_64x64.h5）
 data_filename = data_path + '/UTKFace_{}x{}.h5'.format(img_size, img_size)
 hf = h5py.File(data_filename, 'r')
-labels = hf['labels'][:]  # 加载标签数据
-labels = labels.astype(float)  # 转为浮点型
-images = hf['images'][:]  # 加载图像数据
+
+# 加载连续标签（例如年龄），并转为 float 类型
+age_labels = hf['labels'][:]  # 注意：这里假设 h5 文件中 'labels' 存储年龄
+age_labels = age_labels.astype(float)
+# 加载离散标签（例如人种），并转为 int 类型
+race_labels = hf['races'][:]  # 注意：这里假设 h5 文件中 'races' 存储人种类别，取值为 0~4（共 5 类）
+race_labels = race_labels.astype(int)
+# 加载图像数据
+images = hf['images'][:]
 hf.close()
 
-# -------------------- 数据子集选择 --------------------
-# 选取指定标签范围 [min_label, max_label]
-selected_labels = np.arange(min_label, max_label + 1)
+# ------ 数据子集选择 ------
+# 根据连续标签（年龄）的范围 [min_label, max_label] 选择子集
+selected_age_labels = np.arange(min_label, max_label + 1)
 images_subset = None
-labels_subset = None
-for i in range(len(selected_labels)):
-    curr_label = selected_labels[i]
-    index_curr_label = np.where(labels == curr_label)[0]
+age_labels_subset = None
+race_labels_subset = None
+for i in range(len(selected_age_labels)):
+    curr_age = selected_age_labels[i]
+    # 找出年龄等于当前值的所有样本索引
+    index_curr = np.where(age_labels == curr_age)[0]
     if i == 0:
-        images_subset = images[index_curr_label]
-        labels_subset = labels[index_curr_label]
+        images_subset = images[index_curr]
+        age_labels_subset = age_labels[index_curr]
+        race_labels_subset = race_labels[index_curr]
     else:
-        images_subset = np.concatenate((images_subset, images[index_curr_label]), axis=0)
-        labels_subset = np.concatenate((labels_subset, labels[index_curr_label]))
+        images_subset = np.concatenate((images_subset, images[index_curr]), axis=0)
+        age_labels_subset = np.concatenate((age_labels_subset, age_labels[index_curr]))
+        race_labels_subset = np.concatenate((race_labels_subset, race_labels[index_curr]))
+# 更新数据集：只保留所选子集
 images = images_subset
-labels = labels_subset
-del images_subset, labels_subset
+age_labels = age_labels_subset
+race_labels = race_labels_subset
+del images_subset, age_labels_subset, race_labels_subset
 gc.collect()
 
 # 保留数据的一个副本（原始数据）
 raw_images = copy.deepcopy(images)
-raw_labels = copy.deepcopy(labels)
+raw_age_labels = copy.deepcopy(age_labels)
+raw_race_labels = copy.deepcopy(race_labels)
 
-# -------------------- 每个标签最多保留指定数量的图像 --------------------
+# ------ 每个连续标签（年龄）最多保留指定数量的图像 ------
 image_num_threshold = max_num_img_per_label
-print("\n Original set has {} images; For each label, take no more than {} images>>>".format(
+print("\n Original set has {} images; For each continuous label, take no more than {} images>>>".format(
         len(images), image_num_threshold))
-unique_labels_tmp = np.sort(np.array(list(set(labels))))
-sel_indx = None
-for i in tqdm(range(len(unique_labels_tmp))):
-    indx_i = np.where(labels == unique_labels_tmp[i])[0]
-    if len(indx_i) > image_num_threshold:
-        np.random.shuffle(indx_i)
-        indx_i = indx_i[0:image_num_threshold]
+# 获取所有唯一的年龄值（连续标签）
+unique_age_tmp = np.sort(np.array(list(set(age_labels))))
+sel_index = None
+for i in tqdm(range(len(unique_age_tmp))):
+    index_i = np.where(age_labels == unique_age_tmp[i])[0]
+    if len(index_i) > image_num_threshold:
+        np.random.shuffle(index_i)
+        index_i = index_i[0:image_num_threshold]
     if i == 0:
-        sel_indx = indx_i
+        sel_index = index_i
     else:
-        sel_indx = np.concatenate((sel_indx, indx_i))
-images = images[sel_indx]
-labels = labels[sel_indx]
+        sel_index = np.concatenate((sel_index, index_i))
+    # 根据选取的索引更新图像、连续标签和离散标签
+images = images[sel_index]
+age_labels = age_labels[sel_index]
+race_labels = race_labels[sel_index]
 print("{} images left.".format(len(images)))
 
-# -------------------- 复制少数样本以缓解类别不平衡 --------------------
+# ------ 复制少数样本以缓解连续标签（age）的不平衡 ------
+# 这里仅针对连续标签（例如年龄）进行复制，不涉及离散标签（例如人种）
+# 计算用于复制的最大图像数量：不能超过 max_num_img_per_label_after_replica 和 max_num_img_per_label 中的较小值
 max_num_img_per_label_after_replica = np.min(
         [max_num_img_per_label_after_replica, max_num_img_per_label])
 if max_num_img_per_label_after_replica > 1:
-    unique_labels_replica = np.sort(np.array(list(set(labels))))
-    num_labels_replicated = 0
-    print("Start replicating minority samples >>>")
-    images_replica = None
-    labels_replica = None
-    for i in tqdm(range(len(unique_labels_replica))):
-        curr_label = unique_labels_replica[i]
-        indx_i = np.where(labels == curr_label)[0]
-        if len(indx_i) < max_num_img_per_label_after_replica:
-            num_img_less = max_num_img_per_label_after_replica - len(indx_i)
-            indx_replica = np.random.choice(indx_i, size=num_img_less, replace=True)
+    # 获取所有唯一的连续标签值（例如年龄）
+    unique_age = np.sort(np.array(list(set(age_labels))))
+    num_labels_replicated = 0  # 用于统计实际执行复制的标签数量
+    print("Start replicating minority samples for continuous labels >>>")
+    images_replica = None  # 用于存放复制出来的图像
+    age_labels_replica = None  # 用于存放复制出来的连续标签
+    race_labels_replica = None  # 新增：用于存放复制出来的离散标签
+
+    # 遍历每个唯一连续标签
+    for i in tqdm(range(len(unique_age))):
+        curr_age = unique_age[i]
+        # 找出当前标签对应的所有样本索引
+        index_i = np.where(age_labels == curr_age)[0]
+        # 如果当前标签样本数量不足，则进行复制
+        if len(index_i) < max_num_img_per_label_after_replica:
+            num_img_less = max_num_img_per_label_after_replica - len(index_i)
+            # 随机从当前样本中复制缺少的数量（允许重复）
+            index_replica = np.random.choice(index_i, size=num_img_less, replace=True)
             if num_labels_replicated == 0:
-                images_replica = images[indx_replica]
-                labels_replica = labels[indx_replica]
+                images_replica = images[index_replica]
+                age_labels_replica = age_labels[index_replica]
+                race_labels_replica = race_labels[index_replica]  # 同步复制离散标签
             else:
-                images_replica = np.concatenate((images_replica, images[indx_replica]), axis=0)
-                labels_replica = np.concatenate((labels_replica, labels[indx_replica]))
+                images_replica = np.concatenate((images_replica, images[index_replica]), axis=0)
+                age_labels_replica = np.concatenate((age_labels_replica, age_labels[index_replica]))
+                race_labels_replica = np.concatenate(
+                        (race_labels_replica, race_labels[index_replica]), axis=0)  # 同步复制
             num_labels_replicated += 1
+    # 将复制的样本与原始数据合并
     images = np.concatenate((images, images_replica), axis=0)
-    labels = np.concatenate((labels, labels_replica))
-    print("We replicate {} images and labels \n".format(len(images_replica)))
-    del images_replica, labels_replica
+    age_labels = np.concatenate((age_labels, age_labels_replica), axis=0)
+    race_labels = np.concatenate((race_labels, race_labels_replica), axis=0)  # 同步合并
+    # 注意：离散标签（race_labels）无需复制，因为类别样本通常较充足，
+    # 但若需要平衡离散标签可额外增加相应复制逻辑
+    print("We replicate {} images and continuous labels \n".format(len(images_replica)))
+    del images_replica, age_labels_replica, race_labels_replica
     gc.collect()
 
-# -------------------- 标签归一化 --------------------
-print("\n Range of unnormalized labels: ({},{})".format(np.min(labels), np.max(labels)))
-labels = fn_norm_labels(labels,max_label)
-print("\n Range of normalized labels: ({},{})".format(np.min(labels), np.max(labels)))
-unique_labels_norm = np.sort(np.array(list(set(labels))))
+# -------------------- 连续标签归一化 --------------------
+print("\n Range of unnormalized continuous labels: ({},{})".format(np.min(age_labels),
+                                                                   np.max(age_labels)))
+# 使用辅助函数对连续标签归一化到 [0,1]（需要传入最大标签值 max_label）
+age_labels = fn_norm_labels(age_labels, max_label)
+print("\n Range of normalized continuous labels: ({},{})".format(np.min(age_labels),
+                                                                 np.max(age_labels)))
+# 获取归一化后唯一的连续标签（用于后续分析或训练数据准备）
+unique_age_norm = np.sort(np.array(list(set(age_labels))))
+print("Unique race labels before adjustment:", np.unique(race_labels))
 
 # -------------------- 根据数据统计自动计算 kernel_sigma 与 kappa --------------------
 if kernel_sigma < 0:
-    std_label = np.std(labels)
-    kernel_sigma = 1.06 * std_label * (len(labels)) ** (-1 / 5)
+    std_label = np.std(age_labels)
+    kernel_sigma = 1.06 * std_label * (len(age_labels)) ** (-1 / 5)
     print("\n Use rule-of-thumb formula to compute kernel_sigma >>>")
-    print("\n The std of {} labels is {} so the kernel sigma is {}".format(len(labels), std_label,
-                                                                           kernel_sigma))
+    print("\n The std of {} age labels is {} so the kernel sigma is {}".format(
+            len(age_labels), std_label, kernel_sigma))
 
 if kappa < 0:
-    n_unique = len(unique_labels_norm)
+    n_unique = len(unique_age_norm)
     diff_list = []
     for i in range(1, n_unique):
-        diff_list.append(unique_labels_norm[i] - unique_labels_norm[i - 1])
+        diff_list.append(unique_age_norm[i] - unique_age_norm[i - 1])
     kappa_base = np.abs(kappa) * np.max(np.array(diff_list))
     if threshold_type == "hard":
         kappa = kappa_base
@@ -173,53 +173,38 @@ if kappa < 0:
         kappa = 1 / kappa_base ** 2
 
 #######################################################################################
-'''                                Output folders                                  '''
-#######################################################################################
-# -------------------- 创建输出文件夹 --------------------
-path_to_output = os.path.join(root_path,
-                              'output/CcGAN_{}_{}_si{:.3f}_ka{:.3f}_{}_nDs{}_nDa{}_nGa{}_Dbs{}_Gbs{}'.format(
-                                      GAN_arch, threshold_type, kernel_sigma,
-                                      kappa, loss_type,
-                                      num_d_steps, num_grad_acc_d, num_grad_acc_g,
-                                      batch_size_d, batch_size_g))
-os.makedirs(path_to_output, exist_ok=True)
-save_models_folder = os.path.join(path_to_output, 'saved_models')
-os.makedirs(save_models_folder, exist_ok=True)
-save_images_folder = os.path.join(path_to_output, 'saved_images')
-os.makedirs(save_images_folder, exist_ok=True)
-path_to_embed_models = os.path.join(root_path, 'output/embed_models')
-os.makedirs(path_to_embed_models, exist_ok=True)
-
-#######################################################################################
 '''               Pre-trained CNN and GAN for label embedding                       '''
 #######################################################################################
 # -------------------- 定义预训练模型的 checkpoint 文件名 --------------------
-net_embed_filename_ckpt = os.path.join(path_to_embed_models, 'ckpt_{}_epoch_{}_seed_{}.pth'.format(
-        net_embed_type, epoch_cnn_embed, seed))
+net_embed_filename_ckpt = os.path.join(path_to_embed_models,
+                                       'ckpt_{}_epoch_{}_seed_{}_v2.pth'.format(net_embed_type,
+                                                                                epoch_cnn_embed,
+                                                                                seed))
 net_y2h_filename_ckpt = os.path.join(path_to_embed_models,
-                                     'ckpt_net_y2h_epoch_{}_seed_{}.pth'.format(
-                                             epoch_net_y2h, seed))
+                                     'ckpt_net_y2h_epoch_{}_seed_{}_v2.pth'.format(epoch_net_y2h,
+                                                                                   seed))
 
 print("\n " + net_embed_filename_ckpt)
 print("\n " + net_y2h_filename_ckpt)
 
 # -------------------- 构建训练集和 DataLoader --------------------
-trainset = ImgsDataset(images, labels, normalize=True)
+# 这里假设 ImgsDataset 类已经支持同时接受三个参数：图像、连续标签、离散标签，并自动归一化图像
+trainset = ImgsDataset_v2(images, age_labels, race_labels, normalize=True)
 trainloader_embed_net = torch.utils.data.DataLoader(trainset, batch_size=batch_size_embed,
                                                     shuffle=True, num_workers=num_workers)
 
 # -------------------- 构建图像嵌入模型 net_embed --------------------
 net_embed = None
 if net_embed_type == "ResNet18_embed":
-    net_embed = ResNet18_embed(dim_embed=dim_embed)
+    net_embed = ResNet18_embed_v2(dim_embed=dim_embed)
 elif net_embed_type == "ResNet34_embed":
-    net_embed = ResNet34_embed(dim_embed=dim_embed)
+    net_embed = ResNet34_embed_v2(dim_embed=dim_embed)
 elif net_embed_type == "ResNet50_embed":
-    net_embed = ResNet50_embed(dim_embed=dim_embed)
+    net_embed = ResNet50_embed_v2(dim_embed=dim_embed)
 net_embed = net_embed.to(device)
 
 # -------------------- 构建标签映射模型 net_y2h --------------------
-net_y2h = model_y2h(dim_embed=dim_embed)
+net_y2h = model_y2h_v2(dim_embed=dim_embed)
 net_y2h = net_y2h.to(device)
 
 ## (1). 训练 net_embed：将图像映射到嵌入空间，然后通过 h2y 映射回标签（x2h+h2y）
@@ -244,7 +229,7 @@ else:
 ## (2). 训练 net_y2h：将标签映射到与图像嵌入相同的空间
 if not os.path.isfile(net_y2h_filename_ckpt):
     print("\n Start training net_y2h >>>")
-    net_y2h = train_net_y2h(unique_labels_norm, net_y2h, net_embed, epochs=epoch_net_y2h,
+    net_y2h = train_net_y2h(age_labels, race_labels, net_y2h, net_embed, epochs=epoch_net_y2h,
                             lr_base=base_lr_y2h, lr_decay_factor=0.1,
                             lr_decay_epochs=[150, 250, 350],
                             weight_decay=1e-4, batch_size=128)
@@ -258,44 +243,69 @@ else:
     checkpoint = torch.load(net_y2h_filename_ckpt, weights_only=True, map_location=device)
     net_y2h.load_state_dict(checkpoint['net_state_dict'])
 
-## -------------------- 简单测试，检查标签映射是否正确 --------------------
-unique_labels_norm_embed = np.sort(np.array(list(set(labels))))
-indx_tmp = np.arange(len(unique_labels_norm_embed))
-np.random.shuffle(indx_tmp)
-indx_tmp = indx_tmp[:10]
-labels_tmp = unique_labels_norm_embed[indx_tmp].reshape(-1, 1)
+## -------------------- 简单测试：检查连续标签映射是否正确 --------------------
+# 从连续标签中随机选择 10 个用于测试映射效果
+index_tmp = np.arange(len(unique_age_norm))
+np.random.shuffle(index_tmp)
+index_tmp = index_tmp[:10]  # 60个唯一标签索引打乱后,取前10个
+# labels_tmp: 形状 (10, 1)，注意这里连续标签已经归一化到 [0,1]
+labels_tmp = unique_age_norm[index_tmp].reshape(-1, 1)
 labels_tmp = torch.from_numpy(labels_tmp).type(torch.float).to(device)
+# 添加噪声，模拟连续标签的不确定性
 epsilons_tmp = np.random.normal(0, 0.2, len(labels_tmp))
 epsilons_tmp = torch.from_numpy(epsilons_tmp).view(-1, 1).type(torch.float).to(device)
 labels_noise_tmp = torch.clamp(labels_tmp + epsilons_tmp, 0.0, 1.0)
-net_embed.eval()
-net_h2y = net_embed.h2y
-net_y2h.eval()
-with torch.no_grad():
-    labels_hidden_tmp = net_y2h(labels_tmp)
-    labels_noise_hidden_tmp = net_y2h(labels_noise_tmp)
-    labels_rec_tmp = net_h2y(labels_hidden_tmp).cpu().numpy().reshape(-1, 1)
-    labels_noise_rec_tmp = net_h2y(labels_noise_hidden_tmp).cpu().numpy().reshape(-1, 1)
-    labels_hidden_tmp = labels_hidden_tmp.cpu().numpy()
-    labels_noise_hidden_tmp = labels_noise_hidden_tmp.cpu().numpy()
-labels_tmp = labels_tmp.cpu().numpy()
-labels_noise_tmp = labels_noise_tmp.cpu().numpy()
-results1 = np.concatenate((labels_tmp, labels_rec_tmp), axis=1)
-print("\n labels vs reconstructed labels")
-print(results1)
-labels_diff = (labels_tmp - labels_noise_tmp) ** 2
-hidden_diff = np.mean((labels_hidden_tmp - labels_noise_hidden_tmp) ** 2, axis=1, keepdims=True)
-results2 = np.concatenate((labels_diff, hidden_diff), axis=1)
-print("\n labels diff vs hidden diff")
-print(results2)
 
-# 将嵌入模型放回 CPU 并释放内存
+# 对于离散标签测试，我们可以选择一个固定的类别，例如 2（假设类别取值为 0~4）
+fixed_class = torch.full((labels_tmp.size(0),), 2, dtype=torch.long).to(device)
+
+net_embed.eval()
+net_y2h.eval()
+
+# 获取预训练好的 net_embed 中的两个输出分支
+net_h2y_cont = net_embed.h2y_cont  # 用于连续标签重构
+net_h2y_class = net_embed.h2y_class  # 用于离散标签重构
+
+with torch.no_grad():
+    # 将加噪后的连续标签与固定离散标签一起输入 net_y2h，得到联合标签嵌入 h
+    h = net_y2h(labels_noise_tmp, fixed_class)
+    # 利用连续分支反映射得到重构的连续标签
+    labels_rec_tmp = net_h2y_cont(h).cpu().numpy().reshape(-1, 1)
+    # 利用分类分支得到重构的离散标签 logits
+    class_logits = net_h2y_class(h).cpu().numpy()  # 形状 (10, NUM_CLASSES)
+
+    # 对连续标签部分不加噪声的原始标签也通过 net_y2h 进行映射重构，作为对比
+    h_orig = net_y2h(labels_tmp, fixed_class)
+    labels_rec_orig = net_h2y_cont(h_orig).cpu().numpy().reshape(-1, 1)
+
+    # 同时，计算连续标签在加噪前后的差异，用于评估噪声对映射的影响
+    labels_tmp_np = labels_tmp.cpu().numpy()
+    labels_noise_np = labels_noise_tmp.cpu().numpy()
+
+# 输出测试结果：连续标签重构对比
+results1 = np.concatenate((labels_tmp_np, labels_rec_orig, labels_rec_tmp), axis=1)
+print("\n Continuous labels vs reconstructed labels:")
+print("Original, Rec (no noise), Rec (with noise)")
+print(results1)
+
+# 计算连续标签误差（均方差），作为指标
+labels_diff = (labels_tmp_np - labels_noise_np) ** 2
+# 这里也可以计算隐层表示差异等
+print("\n Continuous labels diff (squared):")
+print(labels_diff)
+
+# 输出离散标签部分的预测
+# 对 logits 做 softmax 并取最大概率对应的类别
+import torch.nn.functional as F
+
+predicted_class = F.softmax(torch.tensor(class_logits), dim=1).argmax(dim=1).numpy()
+print("\n Fixed discrete label: 2, Predicted discrete label from net_y2h fusion branch:")
+print(predicted_class)
+
+# 释放内存：将模型放回 CPU
 net_embed = net_embed.cpu()
-net_h2y = net_h2y.cpu()
-del net_embed, net_h2y
-gc.collect()
 net_y2h = net_y2h.cpu()
-sys.exit()
+
 #######################################################################################
 '''                                    GAN training                                 '''
 #######################################################################################
@@ -323,7 +333,8 @@ if not os.path.isfile(ckpt_gan_path):
     netD = nn.DataParallel(netD)
 
     # 调用 train_ccgan 函数进行 GAN 训练
-    netG, netD = train_ccgan(kernel_sigma, kappa, images, labels, netG, netD, net_y2h,
+    netG, netD = train_ccgan(kernel_sigma, kappa, images, age_labels, race_labels, netG, netD,
+                             net_y2h,
                              save_images_folder=save_images_in_train_folder,
                              save_models_folder=save_models_folder)
     # 保存训练好的生成器模型
