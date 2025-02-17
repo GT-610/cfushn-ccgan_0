@@ -1,5 +1,3 @@
-import sys
-
 print("\n========================================================================================")
 
 # -------------------- 导入第三方包 --------------------
@@ -10,7 +8,6 @@ import matplotlib.pyplot as plt  # 绘图
 
 plt.switch_backend('agg')  # 使用非交互式后端
 import h5py  # 读取 HDF5 文件
-import os  # 文件与目录操作
 from tqdm import tqdm  # 显示进度条
 import timeit  # 计时工具
 
@@ -24,11 +21,6 @@ from models.sngan import *
 from models.ResNet_embed import *
 from train_ccgan import train_ccgan  # 导入 GAN 训练及采样函数
 from train_net_for_label_embed import train_net_embed, train_net_y2h
-
-#######################################################################################
-'''                                   Settings                                      '''
-#######################################################################################
-os.chdir(root_path)  # 切换到根路径
 
 # -------------------- 注册信号事件 --------------------
 register_signal_handler()
@@ -48,29 +40,12 @@ def my_trap(signal_num: int):
         sys.exit(0)
 
 
-# -------------------- 设置随机种子，确保结果可复现 --------------------
-random.seed(seed)
-torch.manual_seed(seed)
-torch.backends.cudnn.deterministic = True
-cudnn.benchmark = False
-np.random.seed(seed)
-
-# -------------------- Embedding 部分超参数 --------------------
-base_lr_x2y = 0.01  # 用于训练 net_embed（图像到嵌入）的基础学习率
-base_lr_y2h = 0.01  # 用于训练 net_y2h（标签到嵌入）的基础学习率
-
-NGPU = torch.cuda.device_count()  # 当前可用的 GPU 数量
-
-# 如果指定了 torch 模型保存路径，则设置环境变量 TORCH_HOME
-if torch_model_path != "None":
-    os.environ['TORCH_HOME'] = torch_model_path
-
 #######################################################################################
 '''                                    Data loader                                 '''
 #######################################################################################
 # -------------------- 加载数据 --------------------
 # 数据文件名：根据图像尺寸构造 h5 文件名（例如 UTKFace_64x64.h5）
-data_filename = data_path + '/UTKFace_{}x{}.h5'.format(img_size, img_size)
+data_filename = DATA_PATH + '/UTKFace_{}x{}.h5'.format(IMG_SIZE, IMG_SIZE)
 hf = h5py.File(data_filename, 'r')
 labels = hf['labels'][:]  # 加载标签数据
 labels = labels.astype(float)  # 转为浮点型
@@ -79,7 +54,7 @@ hf.close()
 
 # -------------------- 数据子集选择 --------------------
 # 选取指定标签范围 [min_label, max_label]
-selected_labels = np.arange(min_label, max_label + 1)
+selected_labels = np.arange(MIN_LABEL, MAX_LABEL + 1)
 images_subset = None
 labels_subset = None
 for i in range(len(selected_labels)):
@@ -101,7 +76,7 @@ raw_images = copy.deepcopy(images)
 raw_labels = copy.deepcopy(labels)
 
 # -------------------- 每个标签最多保留指定数量的图像 --------------------
-image_num_threshold = max_num_img_per_label
+image_num_threshold = MAX_NUM_IMG_PER_LABEL
 print("\n Original set has {} images; For each label, take no more than {} images>>>".format(
         len(images), image_num_threshold))
 unique_labels_tmp = np.sort(np.array(list(set(labels))))
@@ -121,7 +96,7 @@ print("{} images left.".format(len(images)))
 
 # -------------------- 复制少数样本以缓解类别不平衡 --------------------
 max_num_img_per_label_after_replica = np.min(
-        [max_num_img_per_label_after_replica, max_num_img_per_label])
+        [MAX_NUM_IMG_PER_LABEL_AFTER_REPLICA, MAX_NUM_IMG_PER_LABEL])
 if max_num_img_per_label_after_replica > 1:
     unique_labels_replica = np.sort(np.array(list(set(labels))))
     num_labels_replicated = 0
@@ -149,25 +124,25 @@ if max_num_img_per_label_after_replica > 1:
 
 # -------------------- 标签归一化 --------------------
 print("\n Range of unnormalized labels: ({},{})".format(np.min(labels), np.max(labels)))
-labels = fn_norm_labels(labels,max_label)
+labels = fn_norm_labels(labels, MAX_LABEL)
 print("\n Range of normalized labels: ({},{})".format(np.min(labels), np.max(labels)))
 unique_labels_norm = np.sort(np.array(list(set(labels))))
 
 # -------------------- 根据数据统计自动计算 kernel_sigma 与 kappa --------------------
-if kernel_sigma < 0:
+if KERNEL_SIGMA < 0:
     std_label = np.std(labels)
     kernel_sigma = 1.06 * std_label * (len(labels)) ** (-1 / 5)
     print("\n Use rule-of-thumb formula to compute kernel_sigma >>>")
     print("\n The std of {} labels is {} so the kernel sigma is {}".format(len(labels), std_label,
                                                                            kernel_sigma))
 
-if kappa < 0:
+if KAPPA < 0:
     n_unique = len(unique_labels_norm)
     diff_list = []
     for i in range(1, n_unique):
         diff_list.append(unique_labels_norm[i] - unique_labels_norm[i - 1])
-    kappa_base = np.abs(kappa) * np.max(np.array(diff_list))
-    if threshold_type == "hard":
+    kappa_base = np.abs(KAPPA) * np.max(np.array(diff_list))
+    if THRESHOLD_TYPE == "hard":
         kappa = kappa_base
     else:
         kappa = 1 / kappa_base ** 2
@@ -176,18 +151,18 @@ if kappa < 0:
 '''                                Output folders                                  '''
 #######################################################################################
 # -------------------- 创建输出文件夹 --------------------
-path_to_output = os.path.join(root_path,
+path_to_output = os.path.join(ROOT_PATH,
                               'output/CcGAN_{}_{}_si{:.3f}_ka{:.3f}_{}_nDs{}_nDa{}_nGa{}_Dbs{}_Gbs{}'.format(
-                                      GAN_arch, threshold_type, kernel_sigma,
-                                      kappa, loss_type,
-                                      num_d_steps, num_grad_acc_d, num_grad_acc_g,
-                                      batch_size_d, batch_size_g))
+                                      GAN_ARCH, THRESHOLD_TYPE, KERNEL_SIGMA,
+                                      KAPPA, LOSS_TYPE,
+                                      NUM_D_STEPS, NUM_GRAD_ACC_D, NUM_GRAD_ACC_G,
+                                      BATCH_SIZE_D, BATCH_SIZE_G))
 os.makedirs(path_to_output, exist_ok=True)
 save_models_folder = os.path.join(path_to_output, 'saved_models')
 os.makedirs(save_models_folder, exist_ok=True)
 save_images_folder = os.path.join(path_to_output, 'saved_images')
 os.makedirs(save_images_folder, exist_ok=True)
-path_to_embed_models = os.path.join(root_path, 'output/embed_models')
+path_to_embed_models = os.path.join(ROOT_PATH, 'output/embed_models')
 os.makedirs(path_to_embed_models, exist_ok=True)
 
 #######################################################################################
@@ -195,31 +170,31 @@ os.makedirs(path_to_embed_models, exist_ok=True)
 #######################################################################################
 # -------------------- 定义预训练模型的 checkpoint 文件名 --------------------
 net_embed_filename_ckpt = os.path.join(path_to_embed_models, 'ckpt_{}_epoch_{}_seed_{}.pth'.format(
-        net_embed_type, epoch_cnn_embed, seed))
+        NET_EMBED_TYPE, EPOCH_CNN_EMBED, SEED))
 net_y2h_filename_ckpt = os.path.join(path_to_embed_models,
                                      'ckpt_net_y2h_epoch_{}_seed_{}.pth'.format(
-                                             epoch_net_y2h, seed))
+                                             EPOCH_NET_Y2H, SEED))
 
 print("\n " + net_embed_filename_ckpt)
 print("\n " + net_y2h_filename_ckpt)
 
 # -------------------- 构建训练集和 DataLoader --------------------
 trainset = ImgsDataset(images, labels, normalize=True)
-trainloader_embed_net = torch.utils.data.DataLoader(trainset, batch_size=batch_size_embed,
-                                                    shuffle=True, num_workers=num_workers)
+trainloader_embed_net = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE_EMBED,
+                                                    shuffle=True, num_workers=NUM_WORKERS)
 
 # -------------------- 构建图像嵌入模型 net_embed --------------------
 net_embed = None
-if net_embed_type == "ResNet18_embed":
-    net_embed = ResNet18_embed(dim_embed=dim_embed)
-elif net_embed_type == "ResNet34_embed":
-    net_embed = ResNet34_embed(dim_embed=dim_embed)
-elif net_embed_type == "ResNet50_embed":
-    net_embed = ResNet50_embed(dim_embed=dim_embed)
+if NET_EMBED_TYPE == "ResNet18_embed":
+    net_embed = ResNet18_embed(dim_embed=DIM_EMBED)
+elif NET_EMBED_TYPE == "ResNet34_embed":
+    net_embed = ResNet34_embed(dim_embed=DIM_EMBED)
+elif NET_EMBED_TYPE == "ResNet50_embed":
+    net_embed = ResNet50_embed(dim_embed=DIM_EMBED)
 net_embed = net_embed.to(device)
 
 # -------------------- 构建标签映射模型 net_y2h --------------------
-net_y2h = model_y2h(dim_embed=dim_embed)
+net_y2h = model_y2h(dim_embed=DIM_EMBED)
 net_y2h = net_y2h.to(device)
 
 ## (1). 训练 net_embed：将图像映射到嵌入空间，然后通过 h2y 映射回标签（x2h+h2y）
@@ -227,9 +202,9 @@ if not os.path.isfile(net_embed_filename_ckpt):
     print("\n Start training CNN for label embedding >>>")
     net_embed = train_net_embed(net=net_embed, net_name=net_embed,
                                 trainloader=trainloader_embed_net,
-                                testloader=None, epochs=epoch_cnn_embed,
-                                resume_epoch=resumeepoch_cnn_embed,
-                                lr_base=base_lr_x2y, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
+                                testloader=None, epochs=EPOCH_CNN_EMBED,
+                                resume_epoch=RESUME_EPOCH_CNN_EMBED,
+                                lr_base=BASE_LR_X2Y, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
                                 weight_decay=1e-4, path_to_ckpt=path_to_embed_models)
     # 保存训练好的 net_embed 模型
     torch.save({
@@ -244,8 +219,8 @@ else:
 ## (2). 训练 net_y2h：将标签映射到与图像嵌入相同的空间
 if not os.path.isfile(net_y2h_filename_ckpt):
     print("\n Start training net_y2h >>>")
-    net_y2h = train_net_y2h(unique_labels_norm, net_y2h, net_embed, epochs=epoch_net_y2h,
-                            lr_base=base_lr_y2h, lr_decay_factor=0.1,
+    net_y2h = train_net_y2h(unique_labels_norm, net_y2h, net_embed, epochs=EPOCH_NET_Y2H,
+                            lr_base=BASE_LR_Y2H, lr_decay_factor=0.1,
                             lr_decay_epochs=[150, 250, 350],
                             weight_decay=1e-4, batch_size=128)
     # 保存训练好的 net_y2h 模型
@@ -299,31 +274,31 @@ sys.exit()
 #######################################################################################
 '''                                    GAN training                                 '''
 #######################################################################################
-print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(GAN_arch, threshold_type,
-                                                                kernel_sigma, kappa))
+print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(GAN_ARCH, THRESHOLD_TYPE,
+                                                                KERNEL_SIGMA, KAPPA))
 save_images_in_train_folder = os.path.join(save_images_folder, 'images_in_train')
 os.makedirs(save_images_in_train_folder, exist_ok=True)
 
 start = timeit.default_timer()
 print("\n Begin Training >>>")
-ckpt_gan_path = os.path.join(save_models_folder, 'ckpt_niter_{}.pth'.format(niters))
+ckpt_gan_path = os.path.join(save_models_folder, 'ckpt_niter_{}.pth'.format(N_ITERS))
 print(ckpt_gan_path)
 netG = None
 netD = None
 if not os.path.isfile(ckpt_gan_path):
     # 根据 GAN 架构选择生成器与判别器
-    if GAN_arch == "SAGAN":
+    if GAN_ARCH == "SAGAN":
         # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
         # netD = sagan_discriminator(dim_embed=dim_embed).to(device)
         pass
     else:
-        netG = sngan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
-        netD = sngan_discriminator(dim_embed=dim_embed).to(device)
+        netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
+        netD = sngan_discriminator(dim_embed=DIM_EMBED).to(device)
     netG = nn.DataParallel(netG)  # 使用多GPU并行训练
     netD = nn.DataParallel(netD)
 
     # 调用 train_ccgan 函数进行 GAN 训练
-    netG, netD = train_ccgan(kernel_sigma, kappa, images, labels, netG, netD, net_y2h,
+    netG, netD = train_ccgan(KERNEL_SIGMA, KAPPA, images, labels, netG, netD, net_y2h,
                              save_images_folder=save_images_in_train_folder,
                              save_models_folder=save_models_folder)
     # 保存训练好的生成器模型
@@ -332,11 +307,11 @@ else:
     print("Loading pre-trained generator >>>")
     checkpoint = torch.load(ckpt_gan_path, weights_only=True, map_location=device)
     # 根据 GAN 架构选择生成器
-    if GAN_arch == "SAGAN":
+    if GAN_ARCH == "SAGAN":
         # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
         pass
     else:
-        netG = sngan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
+        netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
     netG = nn.DataParallel(netG)
     netG.load_state_dict(checkpoint['netG_state_dict'])
 

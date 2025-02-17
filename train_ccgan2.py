@@ -33,13 +33,13 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
     net_y2h = net_y2h.to(device)
     net_y2h.eval()
 
-    optimizerG = torch.optim.Adam(netG.parameters(), lr=lr_g, betas=(0.5, 0.999), weight_decay=0)
-    optimizerD = torch.optim.Adam(netD.parameters(), lr=lr_d, betas=(0.5, 0.999), weight_decay=0)
+    optimizerG = torch.optim.Adam(netG.parameters(), lr=LR_G, betas=(0.5, 0.999), weight_decay=0)
+    optimizerD = torch.optim.Adam(netD.parameters(), lr=LR_D, betas=(0.5, 0.999), weight_decay=0)
 
     # 如果从中断处恢复训练，则加载 checkpoint（与常规 GAN 训练一致）
-    if save_models_folder is not None and resume_niters > 0:
+    if save_models_folder is not None and RESUME_N_ITERS > 0:
         save_file = os.path.join(save_models_folder, "ckpts_in_train",
-                                 f"ckpt_niter_{resume_niters}.pth")
+                                 f"ckpt_niter_{RESUME_N_ITERS}.pth")
         checkpoint = torch.load(save_file, map_location=device)
         netG.load_state_dict(checkpoint['netG_state_dict'])
         netD.load_state_dict(checkpoint['netD_state_dict'])
@@ -53,7 +53,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
     # 固定噪声 z_fixed 和固定标签 y_cont_fixed,y_class_fixed 用于训练过程中定期可视化生成效果
     n_row, n_col = 10, 25  # 每行年龄依次增大,每5列一个人种
-    z_fixed = torch.randn(n_row * n_col, dim_gan, dtype=torch.float).to(device)
+    z_fixed = torch.randn(n_row * n_col, DIM_GAN, dtype=torch.float).to(device)
     # 分位数, eg:q=0.5就是中位数
     start_label = np.quantile(cont_labels, 0.05)
     end_label = np.quantile(cont_labels, 0.95)
@@ -67,7 +67,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
         # 逐行递增年龄标签
         for j in range(n_col):
             y_cont_fixed[i * n_col + j] = curr_label
-            y_class_fixed[i * n_col + j] = selected_class_labels[j // (n_col // num_classes)]
+            y_class_fixed[i * n_col + j] = selected_class_labels[j // (n_col // NUM_CLASSES)]
 
     print(f"Fixed labels for visualization (covering all classes): {y_cont_fixed} ")
     y_cont_fixed = torch.from_numpy(y_cont_fixed).type(torch.float).view(-1, 1).to(device)
@@ -91,36 +91,36 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
     fake_dis_out = None
     start_time = timeit.default_timer()
 
-    for niter in range(resume_niters, niters):
+    for niter in range(RESUME_N_ITERS, N_ITERS):
 
         ''' 
         ============================================================
         判别器训练部分
         ============================================================ '''
-        for _ in range(num_d_steps):
+        for _ in range(NUM_D_STEPS):
             optimizerD.zero_grad()
 
             # 梯度累积（多步更新平均梯度）
-            for _ in range(num_grad_acc_d):
+            for _ in range(NUM_GRAD_ACC_D):
                 # 从连续标签(唯一)中随机采样 batch_size 个标签
-                batch_cont_labels = np.random.choice(unique_cont_labels, size=batch_size_d,
+                batch_cont_labels = np.random.choice(unique_cont_labels, size=BATCH_SIZE_D,
                                                      replace=True)
-                batch_fake_cont_labels = np.zeros(batch_size_d)
+                batch_fake_cont_labels = np.zeros(BATCH_SIZE_D)
                 # 类别标签不再进行抽取,因为后续选出真实样本后,三者(img,cont,class)需要对应上
                 # 具体流程:先对当前连续标签加噪再进行邻域操作,然后在邻域内随机选一个真实样本
                 # (假设不同类别的样本在各个连续标签都很充足, 在每次的邻域择取中出现的概率差不多)
                 # batch_class_labels = np.zeros(batch_size_d)
 
                 # 对连续标签加噪：对每个标签加上 Gaussian 噪声，模拟公式中的 y_target + ε
-                batch_epsilons = np.random.normal(0, kernel_sigma, batch_size_d)
+                batch_epsilons = np.random.normal(0, kernel_sigma, BATCH_SIZE_D)
                 batch_cont_labels_e = batch_cont_labels + batch_epsilons
 
                 # 初始化数组：存放选中的真实样本索引
-                batch_real_index = np.zeros(batch_size_d, dtype=int)
+                batch_real_index = np.zeros(BATCH_SIZE_D, dtype=int)
 
                 # 对于每个目标标签，寻找其邻域内的真实样本，并生成假标签
-                for j in range(batch_size_d):
-                    if threshold_type == "hard":
+                for j in range(BATCH_SIZE_D):
+                    if THRESHOLD_TYPE == "hard":
                         # 硬邻域：选择满足 |train_label - target_label| ≤ κ 的样本
                         index_real_in_vicinity = \
                             np.nonzero(np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa)[0]
@@ -128,7 +128,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                         # 软邻域：利用逆向条件 (y - target)² ≤ -log(threshold)/κ
                         index_real_in_vicinity = np.nonzero(
                                 (cont_labels - batch_cont_labels_e[j]) ** 2 <= -np.log(
-                                        nonzero_soft_weight_threshold) / kappa)[0]
+                                        NONZERO_SOFT_WEIGHT_THRESHOLD) / kappa)[0]
 
                     # 如果当前目标标签在训练集中无对应邻域样本，则重新采样（保证至少1个样本）
                     while len(index_real_in_vicinity) < 1:
@@ -136,27 +136,27 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                         batch_cont_labels_e[j] = batch_cont_labels[j] + batch_epsilons_j
                         if clip_label:
                             batch_cont_labels_e = np.clip(batch_cont_labels_e, 0.0, 1.0)
-                        if threshold_type == "hard":
+                        if THRESHOLD_TYPE == "hard":
                             index_real_in_vicinity = \
                                 np.nonzero(np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa)[0]
                         else:
                             index_real_in_vicinity = np.nonzero(
                                     (cont_labels - batch_cont_labels_e[j]) ** 2 <= -np.log(
-                                            nonzero_soft_weight_threshold) / kappa)[0]
+                                            NONZERO_SOFT_WEIGHT_THRESHOLD) / kappa)[0]
 
                     # 随机从邻域内选取一个真实样本的索引（对应于利用邻域内样本联合估计条件分布）
                     batch_real_index[j] = np.random.choice(index_real_in_vicinity, size=1)[0]
 
                     # 为生成器生成假标签：在目标标签邻域内均匀采样
-                    if threshold_type == "hard":
+                    if THRESHOLD_TYPE == "hard":
                         lb = batch_cont_labels_e[j] - kappa
                         ub = batch_cont_labels_e[j] + kappa
                     else:
                         # 软邻域使用区间 [target - sqrt(-log(threshold)/κ), target + sqrt(-log(threshold)/κ)]
                         lb = batch_cont_labels_e[j] - np.sqrt(
-                                -np.log(nonzero_soft_weight_threshold) / kappa)
+                                -np.log(NONZERO_SOFT_WEIGHT_THRESHOLD) / kappa)
                         ub = batch_cont_labels_e[j] + np.sqrt(
-                                -np.log(nonzero_soft_weight_threshold) / kappa)
+                                -np.log(NONZERO_SOFT_WEIGHT_THRESHOLD) / kappa)
                     # 裁剪一下
                     lb = max(0.0, lb)
                     ub = min(ub, 1.0)
@@ -181,7 +181,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # 将生成假标签转换为 tensor，并利用标签嵌入网络 net_y2h（新型回归标签输入机制）
                 batch_fake_cont_labels = torch.from_numpy(batch_fake_cont_labels).type(
                         torch.float).to(device)
-                z = torch.randn(batch_size_d, dim_gan, dtype=torch.float).to(device)
+                z = torch.randn(BATCH_SIZE_D, DIM_GAN, dtype=torch.float).to(device)
                 batch_fake_images = netG(z, net_y2h(batch_fake_cont_labels, batch_class_labels))
 
                 # 将目标标签（用于判别器条件输入）转换到 GPU
@@ -192,23 +192,23 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # ---------------------- 计算邻域权重 -------------------------
                 # 若使用软邻域，权重根据 exp(-kappa*(y - y_target)²) 计算，
                 # 对应公式中软邻域权重 w(y_i, y) = exp(-v*(y_i - y)²)
-                if threshold_type == "soft":
+                if THRESHOLD_TYPE == "soft":
                     real_weights = torch.exp(
                             -kappa * (batch_real_labels - batch_cont_labels_e) ** 2).to(device)
                     fake_weights = torch.exp(
                             -kappa * (batch_fake_cont_labels - batch_cont_labels_e) ** 2).to(device)
                 else:
                     # 硬邻域时，每个样本权重均为1（已隐式在样本筛选中体现）
-                    real_weights = torch.ones(batch_size_d, dtype=torch.float).to(device)
-                    fake_weights = torch.ones(batch_size_d, dtype=torch.float).to(device)
+                    real_weights = torch.ones(BATCH_SIZE_D, dtype=torch.float).to(device)
+                    fake_weights = torch.ones(BATCH_SIZE_D, dtype=torch.float).to(device)
                 # end if threshold type
 
                 # ---------------------- 判别器前向传播 ----------------------
                 # 利用 DiffAugment 进行数据增强（可选）
-                if use_DiffAugment:
-                    real_dis_out = netD(DiffAugment(batch_real_images, policy=policy),
+                if USE_DiffAugment:
+                    real_dis_out = netD(DiffAugment(batch_real_images, policy=POLICY),
                                         net_y2h(batch_cont_labels_e, batch_class_labels))
-                    fake_dis_out = netD(DiffAugment(batch_fake_images.detach(), policy=policy),
+                    fake_dis_out = netD(DiffAugment(batch_fake_images.detach(), policy=POLICY),
                                         net_y2h(batch_cont_labels_e, batch_class_labels))
                 else:
                     real_dis_out = netD(batch_real_images,
@@ -219,12 +219,12 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # ---------------------- 判别器损失计算 ----------------------
                 # 对应论文中原始 cGAN 损失公式：
                 # L(D) = -E[log(D(x, y))] - E[log(1-D(G(z, y), y))]
-                if loss_type == "vanilla":
+                if LOSS_TYPE == "vanilla":
                     real_dis_out = torch.nn.Sigmoid()(real_dis_out)
                     fake_dis_out = torch.nn.Sigmoid()(fake_dis_out)
                     d_loss_real = -torch.log(real_dis_out + 1e-20)
                     d_loss_fake = -torch.log(1 - fake_dis_out + 1e-20)
-                elif loss_type == "hinge":
+                elif LOSS_TYPE == "hinge":
                     d_loss_real = torch.nn.ReLU()(1.0 - real_dis_out)
                     d_loss_fake = torch.nn.ReLU()(1.0 + fake_dis_out)
                 else:
@@ -233,7 +233,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # 加权后求平均：这一步中利用了邻域权重（对应论文中 HVDL/SVDL 的加权求和）
                 d_loss = (torch.mean(real_weights.view(-1) * d_loss_real.view(-1)) +
                           torch.mean(fake_weights.view(-1) * d_loss_fake.view(-1))) / float(
-                        num_grad_acc_d)
+                        NUM_GRAD_ACC_D)
 
                 d_loss.backward()
             # end for grad accumulation
@@ -251,37 +251,37 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
         ============================================================ '''
         netG.train()
         optimizerG.zero_grad()
-        for _ in range(num_grad_acc_g):
+        for _ in range(NUM_GRAD_ACC_G):
             # 随机采样目标标签并加噪（标签加噪机制）
-            batch_cont_labels = np.random.choice(unique_cont_labels, size=batch_size_g,
+            batch_cont_labels = np.random.choice(unique_cont_labels, size=BATCH_SIZE_G,
                                                  replace=True)
-            batch_epsilons = np.random.normal(0, kernel_sigma, batch_size_g)
+            batch_epsilons = np.random.normal(0, kernel_sigma, BATCH_SIZE_G)
             batch_cont_labels_e = batch_cont_labels + batch_epsilons
             batch_cont_labels_e = torch.from_numpy(batch_cont_labels_e).type(torch.float).to(device)
             # 随机采样类别标签
-            batch_class_labels = np.random.choice(unique_class_labels, size=batch_size_g,
+            batch_class_labels = np.random.choice(unique_class_labels, size=BATCH_SIZE_G,
                                                   replace=True)
             batch_class_labels = torch.from_numpy(batch_class_labels).type(torch.long).to(device)
 
             # 生成假图像，条件输入经过 net_y2h 映射
-            z = torch.randn(batch_size_g, dim_gan, dtype=torch.float).to(device)
+            z = torch.randn(BATCH_SIZE_G, DIM_GAN, dtype=torch.float).to(device)
             batch_fake_images = netG(z, net_y2h(batch_cont_labels_e, batch_class_labels))
 
             # 判别器对假图像的输出
-            if use_DiffAugment:
-                dis_out = netD(DiffAugment(batch_fake_images, policy=policy),
+            if USE_DiffAugment:
+                dis_out = netD(DiffAugment(batch_fake_images, policy=POLICY),
                                net_y2h(batch_cont_labels_e, batch_class_labels))
             else:
                 dis_out = netD(batch_fake_images, net_y2h(batch_cont_labels_e, batch_class_labels))
 
             # 生成器损失计算
-            if loss_type == "vanilla":
+            if LOSS_TYPE == "vanilla":
                 dis_out = torch.nn.Sigmoid()(dis_out)
                 g_loss = -torch.mean(torch.log(dis_out + 1e-20))
-            elif loss_type == "hinge":
+            elif LOSS_TYPE == "hinge":
                 g_loss = -dis_out.mean()
 
-            g_loss = g_loss / float(num_grad_acc_g)
+            g_loss = g_loss / float(NUM_GRAD_ACC_G)
             g_loss.backward()
         # end for grad accumulation for generator
 
@@ -289,12 +289,12 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
         # 打印日志：每20次迭代打印一次当前损失、真实/假样本判别概率、时间等信息
         if (niter + 1) % 20 == 0:
-            print(f"CcGAN,{GAN_arch}: [Iter {niter + 1}/{niters}] [D loss: {d_loss.item():.4e}] "
+            print(f"CcGAN,{GAN_ARCH}: [Iter {niter + 1}/{N_ITERS}] [D loss: {d_loss.item():.4e}] "
                   f"[G loss: {g_loss.item():.4e}] [real prob: {real_dis_out.mean().item():.3f}] "
                   f"[fake prob: {fake_dis_out.mean().item():.3f}] [Time: {timeit.default_timer() - start_time:.4f}]")
 
         # 每 visualize_freq 次迭代生成可视化图像（利用固定的 z_fixed 与 y_cont_fixed,y_class_fixed）
-        if (niter + 1) % visualize_freq == 0:
+        if (niter + 1) % VISUALIZE_FREQ == 0:
             netG.eval()
             with torch.no_grad():
                 gen_imgs = netG(z_fixed, net_y2h(y_cont_fixed, y_class_fixed))
@@ -304,7 +304,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
         # 保存模型 checkpoint
         if save_models_folder is not None and (
-                (niter + 1) % save_niters_freq == 0 or (niter + 1) == niters):
+                (niter + 1) % SAVE_N_ITERS_FREQ == 0 or (niter + 1) == N_ITERS):
             save_file = os.path.join(save_models_folder, "ckpts_in_train",
                                      f"ckpt_niter_{niter + 1}.pth")
             os.makedirs(os.path.dirname(save_file), exist_ok=True)

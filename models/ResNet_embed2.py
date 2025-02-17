@@ -14,15 +14,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config.config import device, num_classes
-
-# -------------------- 全局参数设置 --------------------
-NC = 3  # 图像通道数，通常RGB图像为3
-IMG_SIZE = 64  # 输入图像尺寸（假设图像为64x64像素）
-DIM_EMBED = 128  # 嵌入空间的维度
+from config.config import *
 
 
-# ------------------------------------------------------------------------------
 class BasicBlock(nn.Module):
     """
     ResNet 的基础残差模块 (BasicBlock)
@@ -154,7 +148,7 @@ class ResNetEmbed_v2(nn.Module):
         ngpu (int, optional): 使用的 GPU 数量，默认1；若 ngpu > 1，则使用数据并行
     """
 
-    def __init__(self, block, num_blocks, nc=NC, dim_embed=DIM_EMBED, ngpu=1):
+    def __init__(self, block, num_blocks, nc=3, dim_embed=DIM_EMBED, ngpu=1):
         super(ResNetEmbed_v2, self).__init__()
         self.in_planes = 64  # 初始卷积层输出通道数
         self.ngpu = ngpu  # GPU 数量
@@ -194,7 +188,7 @@ class ResNetEmbed_v2(nn.Module):
         )
         # 最后输出层,分支2: h2y_class，将嵌入特征映射到一个标量输出(用于离散标签）
         self.h2y_class = nn.Sequential(
-                nn.Linear(dim_embed, num_classes),
+                nn.Linear(dim_embed, NUM_CLASSES),
                 # 这个分支输出的本质是分类, 最后输出保留logits用于训练时候计算交叉熵损失
                 # 故不需要激活函数，因为后续通常使用 CrossEntropyLoss，该损失函数内部会做 softmax 处理
         )
@@ -295,7 +289,7 @@ class model_y2h_v2(nn.Module):
         )
 
         # 离散标签分支：使用嵌入层将类别索引映射到 dim_embed 维
-        self.class_embed = nn.Embedding(num_classes, dim_embed)
+        self.class_embed = nn.Embedding(NUM_CLASSES, dim_embed)
 
         # 融合层：将连续和离散分支的特征拼接后，再映射到最终的嵌入空间
         self.fusion = nn.Sequential(
@@ -360,7 +354,7 @@ class model_y2h_v2(nn.Module):
 if __name__ == "__main__":
     # 测试代码：构造 ResNet34_embed 模型，并输入随机图像，检查输出尺寸
     net = ResNet34_embed_v2(ngpu=1).to(device)
-    x = torch.randn(16, NC, IMG_SIZE, IMG_SIZE).to(device)  # 随机生成 16 张 64x64 RGB 图像
+    x = torch.randn(16, 3, IMG_SIZE, IMG_SIZE).to(device)  # 随机生成 16 张 64x64 RGB 图像
     out, features = net(x)
     print("输出标量尺寸:", out.size())
     print("嵌入特征尺寸:", features.size())

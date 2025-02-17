@@ -4,7 +4,6 @@ import gc  # 垃圾回收工具
 import h5py  # 读取 HDF5 文件
 from tqdm import tqdm  # 显示进度条
 
-from config.config import *
 from models.ResNet_embed2 import *
 from models.sngan2 import *
 from train_ccgan2 import train_ccgan  # 导入 GAN 训练及采样函数
@@ -33,7 +32,7 @@ def my_trap(signal_num: int):
 # --------------------------- Data loader ---------------------------
 # ------ 加载数据 ------
 # 数据文件名：根据图像尺寸构造 h5 文件名（例如 UTKFace_64x64.h5）
-data_filename = data_path + '/UTKFace_{}x{}.h5'.format(img_size, img_size)
+data_filename = DATA_PATH + '/UTKFace_{}x{}.h5'.format(IMG_SIZE, IMG_SIZE)
 hf = h5py.File(data_filename, 'r')
 
 # 加载连续标签（例如年龄），并转为 float 类型
@@ -48,7 +47,7 @@ hf.close()
 
 # ------ 数据子集选择 ------
 # 根据连续标签（年龄）的范围 [min_label, max_label] 选择子集
-selected_age_labels = np.arange(min_label, max_label + 1)
+selected_age_labels = np.arange(MIN_LABEL, MAX_LABEL + 1)
 images_subset = None
 age_labels_subset = None
 race_labels_subset = None
@@ -77,7 +76,7 @@ raw_age_labels = copy.deepcopy(age_labels)
 raw_race_labels = copy.deepcopy(race_labels)
 
 # ------ 每个连续标签（年龄）最多保留指定数量的图像 ------
-image_num_threshold = max_num_img_per_label
+image_num_threshold = MAX_NUM_IMG_PER_LABEL
 print("\n Original set has {} images; For each continuous label, take no more than {} images>>>".format(
         len(images), image_num_threshold))
 # 获取所有唯一的年龄值（连续标签）
@@ -102,7 +101,7 @@ print("{} images left.".format(len(images)))
 # 这里仅针对连续标签（例如年龄）进行复制，不涉及离散标签（例如人种）
 # 计算用于复制的最大图像数量：不能超过 max_num_img_per_label_after_replica 和 max_num_img_per_label 中的较小值
 max_num_img_per_label_after_replica = np.min(
-        [max_num_img_per_label_after_replica, max_num_img_per_label])
+        [MAX_NUM_IMG_PER_LABEL_AFTER_REPLICA, MAX_NUM_IMG_PER_LABEL])
 if max_num_img_per_label_after_replica > 1:
     # 获取所有唯一的连续标签值（例如年龄）
     unique_age = np.sort(np.array(list(set(age_labels))))
@@ -146,7 +145,7 @@ if max_num_img_per_label_after_replica > 1:
 print("\n Range of unnormalized continuous labels: ({},{})".format(np.min(age_labels),
                                                                    np.max(age_labels)))
 # 使用辅助函数对连续标签归一化到 [0,1]（需要传入最大标签值 max_label）
-age_labels = fn_norm_labels(age_labels, max_label)
+age_labels = fn_norm_labels(age_labels, MAX_LABEL)
 print("\n Range of normalized continuous labels: ({},{})".format(np.min(age_labels),
                                                                  np.max(age_labels)))
 # 获取归一化后唯一的连续标签（用于后续分析或训练数据准备）
@@ -154,20 +153,20 @@ unique_age_norm = np.sort(np.array(list(set(age_labels))))
 print("Unique race labels before adjustment:", np.unique(race_labels))
 
 # -------------------- 根据数据统计自动计算 kernel_sigma 与 kappa --------------------
-if kernel_sigma < 0:
+if KERNEL_SIGMA < 0:
     std_label = np.std(age_labels)
     kernel_sigma = 1.06 * std_label * (len(age_labels)) ** (-1 / 5)
     print("\n Use rule-of-thumb formula to compute kernel_sigma >>>")
     print("\n The std of {} age labels is {} so the kernel sigma is {}".format(
             len(age_labels), std_label, kernel_sigma))
 
-if kappa < 0:
+if KAPPA < 0:
     n_unique = len(unique_age_norm)
     diff_list = []
     for i in range(1, n_unique):
         diff_list.append(unique_age_norm[i] - unique_age_norm[i - 1])
-    kappa_base = np.abs(kappa) * np.max(np.array(diff_list))
-    if threshold_type == "hard":
+    kappa_base = np.abs(KAPPA) * np.max(np.array(diff_list))
+    if THRESHOLD_TYPE == "hard":
         kappa = kappa_base
     else:
         kappa = 1 / kappa_base ** 2
@@ -177,12 +176,12 @@ if kappa < 0:
 #######################################################################################
 # -------------------- 定义预训练模型的 checkpoint 文件名 --------------------
 net_embed_filename_ckpt = os.path.join(path_to_embed_models,
-                                       'ckpt_{}_epoch_{}_seed_{}_v2.pth'.format(net_embed_type,
-                                                                                epoch_cnn_embed,
-                                                                                seed))
+                                       'ckpt_{}_epoch_{}_seed_{}_v2.pth'.format(NET_EMBED_TYPE,
+                                                                                EPOCH_CNN_EMBED,
+                                                                                SEED))
 net_y2h_filename_ckpt = os.path.join(path_to_embed_models,
-                                     'ckpt_net_y2h_epoch_{}_seed_{}_v2.pth'.format(epoch_net_y2h,
-                                                                                   seed))
+                                     'ckpt_net_y2h_epoch_{}_seed_{}_v2.pth'.format(EPOCH_NET_Y2H,
+                                                                                   SEED))
 
 print("\n " + net_embed_filename_ckpt)
 print("\n " + net_y2h_filename_ckpt)
@@ -190,21 +189,21 @@ print("\n " + net_y2h_filename_ckpt)
 # -------------------- 构建训练集和 DataLoader --------------------
 # 这里假设 ImgsDataset 类已经支持同时接受三个参数：图像、连续标签、离散标签，并自动归一化图像
 trainset = ImgsDataset_v2(images, age_labels, race_labels, normalize=True)
-trainloader_embed_net = torch.utils.data.DataLoader(trainset, batch_size=batch_size_embed,
-                                                    shuffle=True, num_workers=num_workers)
+trainloader_embed_net = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE_EMBED,
+                                                    shuffle=True, num_workers=NUM_WORKERS)
 
 # -------------------- 构建图像嵌入模型 net_embed --------------------
 net_embed = None
-if net_embed_type == "ResNet18_embed":
-    net_embed = ResNet18_embed_v2(dim_embed=dim_embed)
-elif net_embed_type == "ResNet34_embed":
-    net_embed = ResNet34_embed_v2(dim_embed=dim_embed)
-elif net_embed_type == "ResNet50_embed":
-    net_embed = ResNet50_embed_v2(dim_embed=dim_embed)
+if NET_EMBED_TYPE == "ResNet18_embed":
+    net_embed = ResNet18_embed_v2(dim_embed=DIM_EMBED)
+elif NET_EMBED_TYPE == "ResNet34_embed":
+    net_embed = ResNet34_embed_v2(dim_embed=DIM_EMBED)
+elif NET_EMBED_TYPE == "ResNet50_embed":
+    net_embed = ResNet50_embed_v2(dim_embed=DIM_EMBED)
 net_embed = net_embed.to(device)
 
 # -------------------- 构建标签映射模型 net_y2h --------------------
-net_y2h = model_y2h_v2(dim_embed=dim_embed)
+net_y2h = model_y2h_v2(dim_embed=DIM_EMBED)
 net_y2h = net_y2h.to(device)
 
 ## (1). 训练 net_embed：将图像映射到嵌入空间，然后通过 h2y 映射回标签（x2h+h2y）
@@ -212,9 +211,9 @@ if not os.path.isfile(net_embed_filename_ckpt):
     print("\n Start training CNN for label embedding >>>")
     net_embed = train_net_embed(net=net_embed, net_name=net_embed,
                                 trainloader=trainloader_embed_net,
-                                testloader=None, epochs=epoch_cnn_embed,
-                                resume_epoch=resumeepoch_cnn_embed,
-                                lr_base=base_lr_x2y, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
+                                testloader=None, epochs=EPOCH_CNN_EMBED,
+                                resume_epoch=RESUME_EPOCH_CNN_EMBED,
+                                lr_base=BASE_LR_X2Y, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
                                 weight_decay=1e-4, path_to_ckpt=path_to_embed_models)
     # 保存训练好的 net_embed 模型
     torch.save({
@@ -229,8 +228,8 @@ else:
 ## (2). 训练 net_y2h：将标签映射到与图像嵌入相同的空间
 if not os.path.isfile(net_y2h_filename_ckpt):
     print("\n Start training net_y2h >>>")
-    net_y2h = train_net_y2h(age_labels, race_labels, net_y2h, net_embed, epochs=epoch_net_y2h,
-                            lr_base=base_lr_y2h, lr_decay_factor=0.1,
+    net_y2h = train_net_y2h(age_labels, race_labels, net_y2h, net_embed, epochs=EPOCH_NET_Y2H,
+                            lr_base=BASE_LR_Y2H, lr_decay_factor=0.1,
                             lr_decay_epochs=[150, 250, 350],
                             weight_decay=1e-4, batch_size=128)
     # 保存训练好的 net_y2h 模型
@@ -309,31 +308,31 @@ net_y2h = net_y2h.cpu()
 #######################################################################################
 '''                                    GAN training                                 '''
 #######################################################################################
-print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(GAN_arch, threshold_type,
-                                                                kernel_sigma, kappa))
+print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(GAN_ARCH, THRESHOLD_TYPE,
+                                                                KERNEL_SIGMA, KAPPA))
 save_images_in_train_folder = os.path.join(save_images_folder, 'images_in_train')
 os.makedirs(save_images_in_train_folder, exist_ok=True)
 
 start = timeit.default_timer()
 print("\n Begin Training >>>")
-ckpt_gan_path = os.path.join(save_models_folder, 'ckpt_niter_{}.pth'.format(niters))
+ckpt_gan_path = os.path.join(save_models_folder, 'ckpt_niter_{}.pth'.format(N_ITERS))
 print(ckpt_gan_path)
 netG = None
 netD = None
 if not os.path.isfile(ckpt_gan_path):
     # 根据 GAN 架构选择生成器与判别器
-    if GAN_arch == "SAGAN":
+    if GAN_ARCH == "SAGAN":
         # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
         # netD = sagan_discriminator(dim_embed=dim_embed).to(device)
         pass
     else:
-        netG = sngan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
-        netD = sngan_discriminator(dim_embed=dim_embed).to(device)
+        netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
+        netD = sngan_discriminator(dim_embed=DIM_EMBED).to(device)
     netG = nn.DataParallel(netG)  # 使用多GPU并行训练
     netD = nn.DataParallel(netD)
 
     # 调用 train_ccgan 函数进行 GAN 训练
-    netG, netD = train_ccgan(kernel_sigma, kappa, images, age_labels, race_labels, netG, netD,
+    netG, netD = train_ccgan(KERNEL_SIGMA, KAPPA, images, age_labels, race_labels, netG, netD,
                              net_y2h,
                              save_images_folder=save_images_in_train_folder,
                              save_models_folder=save_models_folder)
@@ -343,11 +342,11 @@ else:
     print("Loading pre-trained generator >>>")
     checkpoint = torch.load(ckpt_gan_path, weights_only=True, map_location=device)
     # 根据 GAN 架构选择生成器
-    if GAN_arch == "SAGAN":
+    if GAN_ARCH == "SAGAN":
         # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
         pass
     else:
-        netG = sngan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
+        netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
     netG = nn.DataParallel(netG)
     netG.load_state_dict(checkpoint['netG_state_dict'])
 
