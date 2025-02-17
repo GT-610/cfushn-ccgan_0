@@ -4,13 +4,12 @@
 # @Comments: 
 # @Software: PyCharm
 
-import os
 import timeit
 
 from torchvision.utils import save_image
 
 from DiffAugment_pytorch import DiffAugment
-from config.constants import *
+from config.config import *
 from utils.utils import SimpleProgressBar
 
 ''' 
@@ -215,7 +214,7 @@ def train_ccgan(kernel_sigma, kappa, train_images, train_labels, netG, netD, net
 
                 # 将目标标签（用于判别器条件输入）转换到 GPU
                 batch_target_labels = torch.from_numpy(batch_target_labels).type(torch.float).to(
-                    device)
+                        device)
 
                 # ---------------------- 计算邻域权重 -------------------------
                 # 若使用软邻域，权重根据 exp(-kappa*(y - y_target)²) 计算，

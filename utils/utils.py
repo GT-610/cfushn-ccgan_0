@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 import sys
 
-from config.constants import device
+from config.config import device
 
 
 # -------------------- 工具函数：标签归一化与反归一化 --------------------

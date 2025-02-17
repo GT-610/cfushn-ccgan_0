@@ -5,7 +5,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from config.constants import device
+from config.config import device
 
 
 # -------------------------------------------------------------

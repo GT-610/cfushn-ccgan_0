@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn.utils import spectral_norm  # 用于给层施加谱归一化，控制 Lipschitz 常数
 
-from config.constants import device
+from config.config import device
 
 # 全局设置：图像通道数和是否使用偏置项
 channels = 3

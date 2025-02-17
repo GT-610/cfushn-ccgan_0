@@ -1,3 +1,5 @@
+import sys
+
 print("\n========================================================================================")
 
 # -------------------- 导入第三方包 --------------------
@@ -13,12 +15,13 @@ from tqdm import tqdm  # 显示进度条
 import timeit  # 计时工具
 
 # -------------------- 导入项目内部模块 --------------------
-from config.constants import *
+from config.config import *
 
 from utils.utils import *  # 导入项目常用工具函数
 from utils.log_util import cy_log
 from utils.ipc_util import register_signal_handler, get_s1, get_s2
-from models import *  # 导入项目中定义的各种模型
+from models.sngan import *
+from models.ResNet_embed import *
 from train_ccgan import train_ccgan  # 导入 GAN 训练及采样函数
 from train_net_for_label_embed import train_net_embed, train_net_y2h
 
@@ -292,7 +295,7 @@ net_h2y = net_h2y.cpu()
 del net_embed, net_h2y
 gc.collect()
 net_y2h = net_y2h.cpu()
-
+sys.exit()
 #######################################################################################
 '''                                    GAN training                                 '''
 #######################################################################################
