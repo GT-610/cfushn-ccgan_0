@@ -76,7 +76,7 @@ raw_images = copy.deepcopy(images)
 raw_labels = copy.deepcopy(labels)
 
 # -------------------- 每个标签最多保留指定数量的图像 --------------------
-image_num_threshold = MAX_NUM_IMG_PER_LABEL
+image_num_threshold = MAX_IMG_NUM_PER_LABEL
 print("\n Original set has {} images; For each label, take no more than {} images>>>".format(
         len(images), image_num_threshold))
 unique_labels_tmp = np.sort(np.array(list(set(labels))))
@@ -96,7 +96,7 @@ print("{} images left.".format(len(images)))
 
 # -------------------- 复制少数样本以缓解类别不平衡 --------------------
 max_num_img_per_label_after_replica = np.min(
-        [MAX_NUM_IMG_PER_LABEL_AFTER_REPLICA, MAX_NUM_IMG_PER_LABEL])
+        [MIN_IMG_NUM_PER_LABEL, MAX_IMG_NUM_PER_LABEL])
 if max_num_img_per_label_after_replica > 1:
     unique_labels_replica = np.sort(np.array(list(set(labels))))
     num_labels_replicated = 0

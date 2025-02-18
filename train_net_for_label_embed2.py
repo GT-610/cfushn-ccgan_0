@@ -93,14 +93,14 @@ def train_net_embed(net, net_name, trainloader, testloader, epochs=200, resume_e
                     loss = loss_cont + loss_class
                     test_loss += loss.cpu().item()
                 test_loss = test_loss / len(testloader)
-                print(
-                        'Train net_x2y for label embedding: [epoch %d/%d] train_loss:%f test_loss:%f Time:%.4f' %
-                        (epoch + 1, epochs, train_loss, test_loss,
-                         timeit.default_timer() - start_tmp))
+                print('Train net_x2y for label embedding: [epoch %d/%d] '
+                      'train_loss:%f test_loss:%f Time:%.4f' %
+                      (epoch + 1, epochs, train_loss, test_loss,
+                       timeit.default_timer() - start_tmp))
 
         # 保存 checkpoint：每 50 个 epoch 或最后一个 epoch 保存一次模型
         if path_to_ckpt is not None and (((epoch + 1) % 50 == 0) or (epoch + 1 == epochs)):
-            save_file = path_to_ckpt + "/embed_x2y_ckpt_in_train/embed_x2y_checkpoint_epoch_{}_v2.pth".format(
+            save_file = path_to_ckpt + "/embed_x2y_ckpt_in_train/embed_x2y_checkpoint_epoch_{}.pth".format(
                     epoch + 1)
             os.makedirs(os.path.dirname(save_file), exist_ok=True)
             torch.save({
@@ -215,6 +215,6 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
             train_loss += loss.cpu().item()
         train_loss = train_loss / len(trainloader)
 
-        print('\n Train net_y2h: [epoch %d/%d] train_loss:%f Time:%.4f' %
+        print('Train net_y2h: [epoch %d/%d] train_loss:%f Time:%.4f' %
               (epoch + 1, epochs, train_loss, timeit.default_timer() - start_tmp))
     return net_y2h

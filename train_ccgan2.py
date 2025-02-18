@@ -4,25 +4,31 @@
 # @Comments: 
 # @Software: PyCharm
 
+import sys
 import timeit
 
 from torchvision.utils import save_image
 
-from DiffAugment_pytorch import DiffAugment
 from config.config import *
+from utils.DiffAugment_pytorch import DiffAugment
+from utils.ipc_util import register_signal_handler, get_s1
 from utils.utils2 import normalize_images, hflip_images
 
-''' 
-=============================================================================
-训练函数 train_ccgan
---------------------------------------------------------------------------------
-该函数实现了 ccGAN 的训练流程，核心思想包括：
-1. 标签加噪机制：给真实标签加上高斯噪声（对应公式中的 ε ~ N(0, σ²)）
-2. 邻域采样：利用硬邻域或软邻域方法，从训练集中选择标签处于目标标签附近的样本，
-   对应于公式中的指示函数 1{|y_j^r + ε - y_i^r| ≤ κ}（硬邻域）或权重函数 exp(-v*(y_i^r - (y_j^r+ε))²)（软邻域）
-3. 标签嵌入：通过 net_y2h 将一维回归标签映射到高维表示（“新型回归标签输入机制”）
-4. 判别器和生成器的损失分别依据原始 cGAN 损失（vanilla 或 hinge）并结合邻域权重加权
-============================================================================= '''
+# 注册信号事件; 并定义trap,根据信号执行操作
+register_signal_handler()
+
+
+def save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD, rng_state):
+    save_file = os.path.join(save_models_folder, "ckpts_in_train",
+                             f"ckpt_niter_{niter + 1}.pth")
+    os.makedirs(os.path.dirname(save_file), exist_ok=True)
+    torch.save({
+        'netG_state_dict': netG.state_dict(),
+        'netD_state_dict': netD.state_dict(),
+        'optimizerG_state_dict': optimizerG.state_dict(),
+        'optimizerD_state_dict': optimizerD.state_dict(),
+        'rng_state': rng_state
+    }, save_file)
 
 
 def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, netD, net_y2h,
@@ -93,10 +99,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
     for niter in range(RESUME_N_ITERS, N_ITERS):
 
-        ''' 
-        ============================================================
-        判别器训练部分
-        ============================================================ '''
+        '''判别器训练部分'''
         for _ in range(NUM_D_STEPS):
             optimizerD.zero_grad()
 
@@ -241,14 +244,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             optimizerD.step()
         # end for num_D_steps
 
-        ''' 
-        ============================================================
-        生成器训练部分（对应公式：L(G) = - E[ log(D(G(z,y), y) ) ]）
-        -----------------------------------------------------------------
-        1. 随机采样目标标签并加噪
-        2. 利用生成器 netG 生成假图像（条件输入为 net_y2h(batch_cont_labels_e,batch_class_labels)）
-        3. 计算生成器损失（vanilla 或 hinge 损失）
-        ============================================================ '''
+        '''生成器训练部分（对应公式：L(G) = - E[ log(D(G(z,y), y) ) ]）'''
         netG.train()
         optimizerG.zero_grad()
         for _ in range(NUM_GRAD_ACC_G):
@@ -302,19 +298,17 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 save_image(gen_imgs.data, os.path.join(save_images_folder, f'{niter + 1}.png'),
                            nrow=n_row, normalize=True)
 
-        # 保存模型 checkpoint
-        if save_models_folder is not None and (
-                (niter + 1) % SAVE_N_ITERS_FREQ == 0 or (niter + 1) == N_ITERS):
-            save_file = os.path.join(save_models_folder, "ckpts_in_train",
-                                     f"ckpt_niter_{niter + 1}.pth")
-            os.makedirs(os.path.dirname(save_file), exist_ok=True)
-            torch.save({
-                'netG_state_dict': netG.state_dict(),
-                'netD_state_dict': netD.state_dict(),
-                'optimizerG_state_dict': optimizerG.state_dict(),
-                'optimizerD_state_dict': optimizerD.state_dict(),
-                'rng_state': torch.get_rng_state()
-            }, save_file)
+        """主体训练往往过程很长,为应对意外,这里定义一个trap事件，根据信号执行操作"""
+        if get_s1() > 0:
+            print("==============检测到退出信号!!!!!!!!!!!!==============")
+            save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD,
+                       torch.get_rng_state())
+            sys.exit("==============临时保存完毕,结束当前进程!==============")
+
+        # 正常保存模型 checkpoint
+        if (niter + 1) % SAVE_N_ITERS_FREQ == 0 or (niter + 1) == N_ITERS:
+            save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD,
+                       torch.get_rng_state())
     # end for niter
 
     return netG, netD

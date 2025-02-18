@@ -8,7 +8,7 @@ import timeit
 
 from torchvision.utils import save_image
 
-from DiffAugment_pytorch import DiffAugment
+from utils.DiffAugment_pytorch import DiffAugment
 from config.config import *
 from utils.utils import SimpleProgressBar
 

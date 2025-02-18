@@ -26,8 +26,8 @@ NUM_CLASSES = 5
 IMG_SIZE = 64
 DIM_GAN = 256  # 生成器输入的噪声向量的维度
 DIM_EMBED = 128  # 嵌入空间的维度
-MAX_NUM_IMG_PER_LABEL = 99999  # 当前在所有类别里能找到的最大类别样本数
-MAX_NUM_IMG_PER_LABEL_AFTER_REPLICA = 200  # 预先想要为每个类别（标签）在过采样之后所达到的最大样本数。
+MIN_IMG_NUM_PER_LABEL = 150  # 每个标签(组合)对应的最小样本数(达不到就随机复制)
+MAX_IMG_NUM_PER_LABEL = 400  # 每个标签(组合)对应的最大样本数(超过了就随机删除)
 
 BASE_LR_X2Y = 0.01  # 用于训练 net_embed（图像到嵌入）的基础学习率
 BASE_LR_Y2H = 0.01  # 用于训练 net_y2h（标签到嵌入）的基础学习率
@@ -52,5 +52,6 @@ RESUME_EPOCH_CNN_EMBED = 0
 EPOCH_NET_Y2H = 500
 BATCH_SIZE_EMBED = 256
 
-USE_DiffAugment = False  # 是否启用 DiffAugment 数据增强技术的标志
+USE_DiffAugment = True  # 是否启用 DiffAugment 数据增强技术的标志
 POLICY = 'color,translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）
+# POLICY = 'translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）
