@@ -14,9 +14,7 @@ SEED = 2021  # 随机数种子
 NUM_WORKERS = 0  # 数据加载时使用的线程数
 
 N_ITERS = 40000  # GAN 训练的总迭代次数
-RESUME_N_ITERS = 0
-# resume_niter=40000
-## 设置为0,则从头开始训练；设置为其他值，则载入相应的checkpoint（若有），然后继续训练。
+RESUME_N_ITERS = 0  # 恢复训练,载入相应的checkpoint（若有）
 SAVE_N_ITERS_FREQ = 2000  # 模型 checkpoint 的保存频率（以迭代次数计）
 VISUALIZE_FREQ = 500  # 每隔多少次迭代进行一次生成图像的可视化
 
@@ -53,5 +51,5 @@ EPOCH_NET_Y2H = 500
 BATCH_SIZE_EMBED = 256
 
 USE_DiffAugment = True  # 是否启用 DiffAugment 数据增强技术的标志
-POLICY = 'color,translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）
-# POLICY = 'translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）
+# POLICY = 'color,translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）
+POLICY = 'translation,cutout'  # DiffAugment 的具体策略（定义了使用哪些数据增强操作）

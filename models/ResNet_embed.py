@@ -14,14 +14,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from config.constants import device
+from config.config import device, DIM_EMBED, NUM_CLASSES, IMG_SIZE
 
-# -------------------- 全局参数设置 --------------------
-NC = 3            # 图像通道数，通常RGB图像为3
-IMG_SIZE = 64     # 输入图像尺寸（假设图像为64x64像素）
-DIM_EMBED = 128   # 嵌入空间的维度
 
-#------------------------------------------------------------------------------
 class BasicBlock(nn.Module):
     """
     ResNet 的基础残差模块 (BasicBlock)
@@ -45,7 +40,8 @@ class BasicBlock(nn.Module):
         """
         super(BasicBlock, self).__init__()
         # 第一个卷积层，卷积核大小为3x3，padding=1保持尺寸，stride可调
-        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(in_planes, planes, kernel_size=3, stride=stride, padding=1,
+                               bias=False)
         self.bn1 = nn.BatchNorm2d(planes)
         # 第二个卷积层，步幅固定为1
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
@@ -55,8 +51,9 @@ class BasicBlock(nn.Module):
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(self.expansion * planes)
+                    nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride,
+                              bias=False),
+                    nn.BatchNorm2d(self.expansion * planes)
             )
 
     def forward(self, x):
@@ -76,7 +73,8 @@ class BasicBlock(nn.Module):
         out = F.relu(out)
         return out
 
-#------------------------------------------------------------------------------
+
+# ------------------------------------------------------------------------------
 class Bottleneck(nn.Module):
     """
     ResNet 的瓶颈模块 (Bottleneck)
@@ -111,8 +109,9 @@ class Bottleneck(nn.Module):
         self.shortcut = nn.Sequential()
         if stride != 1 or in_planes != self.expansion * planes:
             self.shortcut = nn.Sequential(
-                nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride, bias=False),
-                nn.BatchNorm2d(self.expansion * planes)
+                    nn.Conv2d(in_planes, self.expansion * planes, kernel_size=1, stride=stride,
+                              bias=False),
+                    nn.BatchNorm2d(self.expansion * planes)
             )
 
     def forward(self, x):
@@ -132,8 +131,9 @@ class Bottleneck(nn.Module):
         out = F.relu(out)
         return out
 
-#------------------------------------------------------------------------------
-class ResNetEmbed(nn.Module):
+
+# ------------------------------------------------------------------------------
+class ResNetEmbed_v2(nn.Module):
     """
     基于 ResNet 的图像嵌入网络
 
@@ -147,42 +147,50 @@ class ResNetEmbed(nn.Module):
         dim_embed (int, optional): 嵌入空间的维度，默认 DIM_EMBED (128)
         ngpu (int, optional): 使用的 GPU 数量，默认1；若 ngpu > 1，则使用数据并行
     """
-    def __init__(self, block, num_blocks, nc=NC, dim_embed=DIM_EMBED, ngpu=1):
-        super(ResNetEmbed, self).__init__()
-        self.in_planes = 64      # 初始卷积层输出通道数
-        self.ngpu = ngpu         # GPU 数量
+
+    def __init__(self, block, num_blocks, nc=3, dim_embed=DIM_EMBED, ngpu=1):
+        super(ResNetEmbed_v2, self).__init__()
+        self.in_planes = 64  # 初始卷积层输出通道数
+        self.ngpu = ngpu  # GPU 数量
 
         # 主干网络，包含初始卷积层、BatchNorm、ReLU和多个残差层
         self.main = nn.Sequential(
-            # 初始卷积层，将输入 nc 通道映射到 64 通道，kernel_size=3，padding=1保持尺寸
-            nn.Conv2d(nc, 64, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(64),
-            nn.ReLU(),
-            # 依次构建4个残差层，每个残差层通过 _make_layer 构建
-            # 注意：这里部分层采用 stride=2，实现空间尺寸缩小
-            self._make_layer(block, 64, num_blocks[0], stride=2),   # 输出尺寸：原始尺寸/2
-            self._make_layer(block, 128, num_blocks[1], stride=2),  # 输出尺寸：原始尺寸/4
-            self._make_layer(block, 256, num_blocks[2], stride=2),  # 输出尺寸：原始尺寸/8
-            self._make_layer(block, 512, num_blocks[3], stride=2),  # 输出尺寸：原始尺寸/16
-            # 自适应平均池化，将特征图池化为 1x1 尺寸
-            nn.AdaptiveAvgPool2d((1, 1))
+                # 初始卷积层，将输入 nc 通道映射到 64 通道，kernel_size=3，padding=1保持尺寸
+                nn.Conv2d(nc, 64, kernel_size=3, stride=1, padding=1, bias=False),
+                nn.BatchNorm2d(64),
+                nn.ReLU(),
+                # 依次构建4个残差层，每个残差层通过 _make_layer 构建
+                # 注意：这里部分层采用 stride=2，实现空间尺寸缩小
+                self._make_layer(block, 64, num_blocks[0], stride=2),  # 输出尺寸：原始尺寸/2
+                self._make_layer(block, 128, num_blocks[1], stride=2),  # 输出尺寸：原始尺寸/4
+                self._make_layer(block, 256, num_blocks[2], stride=2),  # 输出尺寸：原始尺寸/8
+                self._make_layer(block, 512, num_blocks[3], stride=2),  # 输出尺寸：原始尺寸/16
+                # 自适应平均池化，将特征图池化为 1x1 尺寸
+                nn.AdaptiveAvgPool2d((1, 1))
         )
 
         # 全连接层，将提取的 512 维特征进一步映射到嵌入空间
         self.x2h_res = nn.Sequential(
-            nn.Linear(512, 512),
-            nn.BatchNorm1d(512),
-            nn.ReLU(),
+                nn.Linear(512, 512),
+                nn.BatchNorm1d(512),
+                nn.ReLU(),
 
-            nn.Linear(512, dim_embed),
-            nn.BatchNorm1d(dim_embed),
-            nn.ReLU(),
+                nn.Linear(512, dim_embed),
+                nn.BatchNorm1d(dim_embed),
+                nn.ReLU(),
         )
 
-        # 最后输出层，将嵌入特征映射到一个标量输出（例如用于回归或其他任务）
-        self.h2y = nn.Sequential(
-            nn.Linear(dim_embed, 1),
-            nn.ReLU()
+        # 最后输出层,分支1: h2y_cont，将嵌入特征映射到一个标量输出(用于回归标签)
+        self.h2y_cont = nn.Sequential(
+                nn.Linear(dim_embed, 1),
+                nn.ReLU()
+                # 这里默认使用非负回归标签, 训练时候使用均方误差
+        )
+        # 最后输出层,分支2: h2y_class，将嵌入特征映射到一个标量输出(用于离散标签）
+        self.h2y_class = nn.Sequential(
+                nn.Linear(dim_embed, NUM_CLASSES),
+                # 这个分支输出的本质是分类, 最后输出保留logits用于训练时候计算交叉熵损失
+                # 故不需要激活函数，因为后续通常使用 CrossEntropyLoss，该损失函数内部会做 softmax 处理
         )
 
     def _make_layer(self, block, planes, num_blocks, stride):
@@ -223,85 +231,133 @@ class ResNetEmbed(nn.Module):
             features = nn.parallel.data_parallel(self.main, x, range(self.ngpu))
             features = features.view(features.size(0), -1)  # 展平为 (batch_size, 512)
             features = nn.parallel.data_parallel(self.x2h_res, features, range(self.ngpu))
-            out = nn.parallel.data_parallel(self.h2y, features, range(self.ngpu))
+            # out = nn.parallel.data_parallel(self.h2y, features, range(self.ngpu))
+            y_cont = nn.parallel.data_parallel(self.h2y_cont, features, range(self.ngpu))
+            y_class = nn.parallel.data_parallel(self.h2y_class, features, range(self.ngpu))
         else:
             features = self.main(x)
             features = features.view(features.size(0), -1)
             features = self.x2h_res(features)
-            out = self.h2y(features)
+            # out = self.h2y(features)
+            y_cont = self.h2y_cont(features)
+            y_class = self.h2y_class(features)
+        return y_cont, y_class, features
 
-        return out, features
 
-#------------------------------------------------------------------------------
-def ResNet18_embed(dim_embed=DIM_EMBED, ngpu=1):
-    return ResNetEmbed(BasicBlock, [2, 2, 2, 2], dim_embed=dim_embed, ngpu=ngpu)
+# ------------------------------------------------------------------------------
+def ResNet18_embed_v2(dim_embed=DIM_EMBED, ngpu=1):
+    return ResNetEmbed_v2(BasicBlock, [2, 2, 2, 2], dim_embed=dim_embed, ngpu=ngpu)
 
-def ResNet34_embed(dim_embed=DIM_EMBED, ngpu=1):
-    return ResNetEmbed(BasicBlock, [3, 4, 6, 3], dim_embed=dim_embed, ngpu=ngpu)
 
-def ResNet50_embed(dim_embed=DIM_EMBED, ngpu=1):
-    return ResNetEmbed(Bottleneck, [3, 4, 6, 3], dim_embed=dim_embed, ngpu=ngpu)
+def ResNet34_embed_v2(dim_embed=DIM_EMBED, ngpu=1):
+    return ResNetEmbed_v2(BasicBlock, [3, 4, 6, 3], dim_embed=dim_embed, ngpu=ngpu)
 
-#------------------------------------------------------------------------------
-class model_y2h(nn.Module):
+
+def ResNet50_embed_v2(dim_embed=DIM_EMBED, ngpu=1):
+    return ResNetEmbed_v2(Bottleneck, [3, 4, 6, 3], dim_embed=dim_embed, ngpu=ngpu)
+
+
+# ------------------------------------------------------------------------------
+class model_y2h_v2(nn.Module):
     """
-    标签到嵌入空间映射模型
+    标签联合嵌入模型
 
-    该网络将一维标签（例如回归标签）映射到与图像嵌入相同的特征空间中，
-    为条件生成或其他任务提供标签的高维表示。
+    该网络将连续标签（例如年龄）和离散标签（例如人种）映射到与图像嵌入相同的特征空间中，
+    为条件生成或其他任务提供联合标签的高维表示。
+
+    输入:
+        y_cont (torch.Tensor): 连续标签，形状应为 (batch_size, 1)。
+        y_class (torch.Tensor): 离散标签，形状应为 (batch_size,) 或 (batch_size, 1)（类别索引）。
+
+    输出:
+        torch.Tensor: 融合后的标签嵌入，形状为 (batch_size, dim_embed)。
     """
+
     def __init__(self, dim_embed=DIM_EMBED):
         # dim_embed (int, optional): 嵌入空间的维度，默认 DIM_EMBED (128)
-        super(model_y2h, self).__init__()
-        self.main = nn.Sequential(
-            # 第一个全连接层，将1维标签映射到 dim_embed 维
-            nn.Linear(1, dim_embed),
-            # 使用 GroupNorm 替代 BatchNorm
-            nn.GroupNorm(8, dim_embed),
-            nn.ReLU(),
+        super(model_y2h_v2, self).__init__()
 
-            # 第二个全连接层
-            nn.Linear(dim_embed, dim_embed),
-            nn.GroupNorm(8, dim_embed),
-            nn.ReLU(),
-
-            # 第三个全连接层
-            nn.Linear(dim_embed, dim_embed),
-            nn.GroupNorm(8, dim_embed),
-            nn.ReLU(),
-
-            # 第四个全连接层
-            nn.Linear(dim_embed, dim_embed),
-            nn.GroupNorm(8, dim_embed),
-            nn.ReLU(),
-
-            # 可选更多全连接层（注释部分为额外层）
-            nn.Linear(dim_embed, dim_embed),
-            nn.ReLU()
+        # 连续标签分支：将1维连续标签映射到 dim_embed 维
+        self.cont_branch = nn.Sequential(
+                nn.Linear(1, dim_embed),
+                # 使用 GroupNorm（这里要求 dim_embed 能被分组数整除，否则可用 LayerNorm）
+                nn.GroupNorm(8, dim_embed),
+                nn.ReLU(),
+                nn.Linear(dim_embed, dim_embed),
+                nn.GroupNorm(8, dim_embed),
+                nn.ReLU()
         )
 
-    def forward(self, y):
-        """
-        前向传播过程，将输入标签映射到嵌入空间
+        # 离散标签分支：使用嵌入层将类别索引映射到 dim_embed 维
+        self.class_embed = nn.Embedding(NUM_CLASSES, dim_embed)
 
-        Args:
-            y (torch.Tensor): 输入标签，形状应为 (batch_size,) 或 (batch_size, 1)
-        
-        Returns:
-            torch.Tensor: 输出的标签嵌入，形状为 (batch_size, dim_embed)
-        """
-        # 将标签展平为 (batch_size, 1) 并加入一个极小值避免数值问题
-        y = y.view(-1, 1) + 1e-8
-        return self.main(y)
+        # 融合层：将连续和离散分支的特征拼接后，再映射到最终的嵌入空间
+        self.fusion = nn.Sequential(
+                nn.Linear(dim_embed * 2, dim_embed),
+                nn.GroupNorm(8, dim_embed),
+                nn.ReLU(),
+                nn.Linear(dim_embed, dim_embed),
+                nn.GroupNorm(8, dim_embed),
+                nn.ReLU()
+        )
 
-#------------------------------------------------------------------------------
+        # self.main = nn.Sequential(
+        #     # 第一个全连接层，将1维标签映射到 dim_embed 维
+        #     nn.Linear(1, dim_embed),
+        #     # 使用 GroupNorm 替代 BatchNorm
+        #     nn.GroupNorm(8, dim_embed),
+        #     nn.ReLU(),
+        #
+        #     # 第二个全连接层
+        #     nn.Linear(dim_embed, dim_embed),
+        #     nn.GroupNorm(8, dim_embed),
+        #     nn.ReLU(),
+        #
+        #     # 第三个全连接层
+        #     nn.Linear(dim_embed, dim_embed),
+        #     nn.GroupNorm(8, dim_embed),
+        #     nn.ReLU(),
+        #
+        #     # 第四个全连接层
+        #     nn.Linear(dim_embed, dim_embed),
+        #     nn.GroupNorm(8, dim_embed),
+        #     nn.ReLU(),
+        #
+        #     # 可选更多全连接层（注释部分为额外层）
+        #     nn.Linear(dim_embed, dim_embed),
+        #     nn.ReLU()
+        # )
+
+    def forward(self, y_cont, y_class):
+        # # 将标签展平为 (batch_size, 1) 并加入一个极小值避免数值问题
+        # y = y.view(-1, 1) + 1e-8
+        # return self.main(y)
+
+        # 确保连续标签的形状为 (batch_size, 1)，并加上一个极小值避免数值问题
+        y_cont = y_cont.view(-1, 1) + 1e-8
+        # 经过连续分支映射
+        cont_feat = self.cont_branch(y_cont)
+
+        # 确保离散标签为长整型（类别索引），若输入形状为 (batch_size, 1)，则展平
+        y_class = y_class.view(-1).long()
+        # 经过嵌入层得到离散标签特征
+        class_feat = self.class_embed(y_class)  # 形状为 (batch_size, dim_embed)
+
+        # 融合：将连续和离散特征在特征维度上拼接
+        combined = torch.cat([cont_feat, class_feat], dim=1)  # 形状 (batch_size, dim_embed*2)
+        # 经过融合层映射到最终嵌入空间
+        out = self.fusion(combined)
+        return out
+
+
+# ------------------------------------------------------------------------------
 if __name__ == "__main__":
     # 测试代码：构造 ResNet34_embed 模型，并输入随机图像，检查输出尺寸
-    net = ResNet34_embed(ngpu=1).to(device)
-    x = torch.randn(16, NC, IMG_SIZE, IMG_SIZE).to(device)  # 随机生成 16 张 64x64 RGB 图像
+    net = ResNet34_embed_v2(ngpu=1).to(device)
+    x = torch.randn(16, 3, IMG_SIZE, IMG_SIZE).to(device)  # 随机生成 16 张 64x64 RGB 图像
     out, features = net(x)
     print("输出标量尺寸:", out.size())
     print("嵌入特征尺寸:", features.size())
 
     # 测试标签映射模型
-    net_y2h = model_y2h()
+    net_y2h = model_y2h_v2()

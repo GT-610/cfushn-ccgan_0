@@ -36,6 +36,21 @@ def get_s2():
     """对应信号:SIGUSR2 = 12"""
     return __s2
 
+
+def switch_s1():
+    """对应信号:SIGUSR1 = 10"""
+    global __s1
+    __s1 = 1 - __s1  # 在0,1之间switch
+    print(f"================== Manually switch s1 to {__s1} ==================")
+
+
+def switch_s2():
+    """对应信号:SIGUSR2 = 12"""
+    global __s2
+    __s2 = 1 - __s2  # 在0,1之间switch
+    print(f"================== Manually switch s2 to {__s2} ==================")
+
+
 if __name__ == "__main__":
 
     import sys
