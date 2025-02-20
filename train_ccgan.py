@@ -11,6 +11,7 @@ from torchvision.utils import save_image
 
 from config.config import *
 from utils.DiffAugment_pytorch import DiffAugment
+from utils.img_util import img_with_sep
 from utils.ipc_util import get_s2, get_s1, switch_s1
 from utils.utils import normalize_images, hflip_images
 
@@ -84,7 +85,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             idx = i * col + j
             y_cont_fixed[idx] = selected_cont_labels[idx % (row_per_class * col)]
             y_class_fixed[idx] = selected_class_labels[curr_class_index]
-    print(f"selected cont labels for visualization (covering all classes): {selected_cont_labels} ")
+    print(f"selected cont labels for sample (covering all classes):\n{selected_cont_labels}")
     y_cont_fixed = torch.from_numpy(y_cont_fixed).type(torch.float).view(-1, 1).to(device)
     y_class_fixed = torch.from_numpy(y_class_fixed).type(torch.long).view(-1).to(device)
 
@@ -306,11 +307,13 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             with torch.no_grad():
                 gen_imgs = netG(z_fixed, net_y2h(y_cont_fixed, y_class_fixed))
                 gen_imgs = gen_imgs.detach().cpu()
-                save_image(gen_imgs.data, os.path.join(save_images_folder, f'{niter + 1}.png'),
-                           nrow=col, normalize=True)  # 注意: nrow表示每行摆放数量,所以=col
+                img = img_with_sep(gen_imgs.data, nrow=col, h_sep_gap=5, width=2)
+                save_image(img, os.path.join(save_images_folder, f'{niter + 1}.png'),
+                           normalize=True)  # 注意: nrow表示每行摆放数量,所以=col
             # 加个锁更好
             if get_s1():
-                print(f"take a sample. iter {niter + 1}.") or switch_s1()
+                print(f"take a sample. iter {niter + 1}.")
+                switch_s1()
 
         # 立即保存模型并退出
         if get_s2():
