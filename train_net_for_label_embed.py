@@ -9,7 +9,7 @@ from config.config import device
 
 
 # -------------------------------------------------------------
-def train_net_embed(net, net_name, trainloader, testloader, epochs=200, resume_epoch=0,
+def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
         lr_base=0.01, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
         weight_decay=1e-4, path_to_ckpt=None):
     # 内部函数：调整学习率，根据当前 epoch 对学习率进行衰减

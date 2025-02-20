@@ -72,13 +72,14 @@ class Bottleneck(nn.Module):
         return out
 
 
-class ResNet(nn.Module):
-    def __init__(self, block, num_blocks, nc=NC):
-        super(ResNet, self).__init__()
+class ResNet_regre(nn.Module):
+    def __init__(self, block, num_blocks, nc=NC, ngpu = 1):
+        super(ResNet_regre, self).__init__()
         self.in_planes = 64
+        self.ngpu = ngpu
 
         self.block1 = nn.Sequential(
-            nn.Conv2d(nc, 64, kernel_size=3, stride=1, padding=1, bias=False),  
+            nn.Conv2d(nc, 64, kernel_size=3, stride=1, padding=1, bias=False),  # h=h
             nn.BatchNorm2d(64),
             nn.ReLU(),
             self._make_layer(block, 64, num_blocks[0], stride=2),  # h=h/2 32
@@ -86,18 +87,19 @@ class ResNet(nn.Module):
         self.block2 = self._make_layer(block, 128, num_blocks[1], stride=2) # h=h/2 16
         self.block3 = self._make_layer(block, 256, num_blocks[2], stride=2) # h=h/2 8
         self.block4 = self._make_layer(block, 512, num_blocks[3], stride=2) # h=h/2 4
-        self.pool = nn.AvgPool2d(kernel_size=4)
+
+        self.pool1 = nn.AvgPool2d(kernel_size=4)
+        self.pool2 = nn.AdaptiveAvgPool2d((2,2))
 
         linear_layers = [
-                nn.Linear(512*block.expansion, 512),
-                nn.BatchNorm1d(512),
+                nn.Linear(512*block.expansion, 128),
+                nn.BatchNorm1d(128),
                 nn.ReLU(),
-                 
-                nn.Linear(512, 512),
-                nn.BatchNorm1d(512),
+                nn.Linear(128, 128),
+                nn.BatchNorm1d(128),
                 nn.ReLU(),
-                
-                nn.Linear(512, 1),
+                nn.Linear(128, 1),
+                # nn.Sigmoid()
                 nn.ReLU(),
             ]
         self.linear = nn.Sequential(*linear_layers)
@@ -112,35 +114,56 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        ft1 = self.block1(x)
-        ft2 = self.block2(ft1)
-        ft3 = self.block3(ft2)
-        ft4 = self.block4(ft3)
-        out = self.pool(ft4)
-        out = out.view(out.size(0), -1)
-        out = self.linear(out)
-        return out
+
+        if x.is_cuda and self.ngpu > 1:
+            ft1 = nn.parallel.data_parallel(self.block1, x, range(self.ngpu))
+            ft2 = nn.parallel.data_parallel(self.block2, ft1, range(self.ngpu))
+            ft3 = nn.parallel.data_parallel(self.block3, ft2, range(self.ngpu))
+            ft4 = nn.parallel.data_parallel(self.block4, ft3, range(self.ngpu))
+            out = nn.parallel.data_parallel(self.pool1, ft4, range(self.ngpu))
+            out = out.view(out.size(0), -1)
+            out = nn.parallel.data_parallel(self.linear, out, range(self.ngpu))
+        else:
+            ft1 = self.block1(x)
+            ft2 = self.block2(ft1)
+            ft3 = self.block3(ft2)
+            ft4 = self.block4(ft3)
+            out = self.pool1(ft4)
+            out = out.view(out.size(0), -1)
+            out = self.linear(out)
+
+        # ## use f4 feature
+        # ext_features = self.pool1(ft4) #reduce the dim so that computing FID won't too long
+        # ## use f3 feature
+        # ext_features = self.pool2(ft3)
+        ## use f2 feature
+        ext_features = self.pool2(ft2)
 
 
-def ResNet18():
-    return ResNet(BasicBlock, [2,2,2,2])
+        ext_features = ext_features.view(ext_features.size(0), -1)
 
-def ResNet34():
-    return ResNet(BasicBlock, [3,4,6,3])
+        return out, ext_features
 
-def ResNet50():
-    return ResNet(Bottleneck, [3,4,6,3])
 
-def ResNet101():
-    return ResNet(Bottleneck, [3,4,23,3])
+def ResNet18_regre_eval(ngpu = 1):
+    return ResNet_regre(BasicBlock, [2,2,2,2], ngpu = ngpu)
 
-def ResNet152():
-    return ResNet(Bottleneck, [3,8,36,3])
+def ResNet34_regre_eval(ngpu = 1):
+    return ResNet_regre(BasicBlock, [3,4,6,3], ngpu = ngpu)
+
+def ResNet50_regre_eval(ngpu = 1):
+    return ResNet_regre(Bottleneck, [3,4,6,3], ngpu = ngpu)
+
+def ResNet101_regre_eval(ngpu = 1):
+    return ResNet_regre(Bottleneck, [3,4,23,3], ngpu = ngpu)
+
+def ResNet152_regre_eval(ngpu = 1):
+    return ResNet_regre(Bottleneck, [3,8,36,3], ngpu = ngpu)
 
 
 if __name__ == "__main__":
-    net = ResNet34().to(device)
-    net = nn.DataParallel(net)
-    x = torch.randn(16,NC,IMG_SIZE,IMG_SIZE).to(device)
-    out = net(x)
+    net = ResNet34_regre_eval(ngpu = 1).cuda()
+    x = torch.randn(16,NC,IMG_SIZE,IMG_SIZE).cuda()
+    out, features = net(x)
     print(out.size())
+    print(features.size())

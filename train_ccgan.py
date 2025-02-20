@@ -11,24 +11,8 @@ from torchvision.utils import save_image
 
 from config.config import *
 from utils.DiffAugment_pytorch import DiffAugment
-from utils.ipc_util import register_signal_handler, get_s2, get_s1, switch_s1
+from utils.ipc_util import get_s2, get_s1, switch_s1
 from utils.utils import normalize_images, hflip_images
-
-# 注册信号事件; 并定义trap,根据信号执行操作
-register_signal_handler()
-
-
-def save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD, rng_state):
-    save_file = os.path.join(save_models_folder, "ckpts_in_train",
-                             f"ckpt_niter_{niter + 1}.pth")
-    os.makedirs(os.path.dirname(save_file), exist_ok=True)
-    torch.save({
-        'netG_state_dict': netG.state_dict(),
-        'netD_state_dict': netD.state_dict(),
-        'optimizerG_state_dict': optimizerG.state_dict(),
-        'optimizerD_state_dict': optimizerD.state_dict(),
-        'rng_state': rng_state
-    }, save_file)
 
 
 def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, netD, net_y2h,
@@ -45,13 +29,11 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
     # 如果从中断处恢复训练，则加载 checkpoint（与常规 GAN 训练一致）
     start_iter = 0
     if save_models_folder is not None and RESUME_N_ITERS > 0:
-
-        checkpoint_path = os.path.join(save_models_folder, "ckpts_in_train",
-                                       f"ckpt_niter_{RESUME_N_ITERS}.pth")
-
+        ckpt_in_train_folder = os.path.join(save_models_folder, "ckpts_in_train")
+        checkpoint_path = os.path.join(ckpt_in_train_folder, f"ckpt_niter_{RESUME_N_ITERS}.pth")
         if not os.path.isfile(checkpoint_path):
             print(f"Warning: {checkpoint_path} not exists.The latest ckpt will be loaded.")
-            files = os.listdir(save_models_folder)
+            files = os.listdir(ckpt_in_train_folder)
             matched_files = []
             for file in files:
                 match = re.match("ckpt_niter_(\d+).pth", file)
@@ -61,46 +43,48 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                     matched_files.append((num, file))
             # 如果没有匹配文件
             if not matched_files:
-                raise FileNotFoundError(f"there has no matched models in '{save_models_folder}'")
+                raise FileNotFoundError(f"there has no matched models in '{ckpt_in_train_folder}'")
             # 按 epoch 值排序并返回最后一个文件的完整路径
             matched_files.sort(key=lambda x: x[0])  # 按 epoch 升序排序
             latest_file = matched_files[-1][1]  # 获取最后一个文件名
             start_iter = matched_files[-1][0]  # 最后一个文件名对应的迭代数
-            checkpoint_path = os.path.join(save_models_folder, latest_file)
+            checkpoint_path = os.path.join(ckpt_in_train_folder, latest_file)
         else:
             start_iter = RESUME_N_ITERS
 
         # 读取ckpt
+        print(f"Loading ckpt {start_iter} >>>")
         checkpoint = torch.load(checkpoint_path, map_location=device)
         netG.load_state_dict(checkpoint['netG_state_dict'])
         netD.load_state_dict(checkpoint['netD_state_dict'])
         optimizerG.load_state_dict(checkpoint['optimizerG_state_dict'])
         optimizerD.load_state_dict(checkpoint['optimizerD_state_dict'])
-        torch.set_rng_state(checkpoint['rng_state'])
+        torch.set_rng_state(checkpoint['rng_state'].cpu())
+        print("Loaded successfully.\n")
 
     # 获取所有唯一的训练标签，用于随机采样
     unique_cont_labels = np.sort(np.array(list(set(cont_labels))))
     unique_class_labels = np.sort(np.array(list(set(class_labels))))
 
-    n_row, n_col = 25, 10  # 注意, 相对于save_image,这里的行列是反过来的(n_col传给它的nrow参数即可)
-    n_row_per_class = n_row // NUM_CLASSES  # 25/5=5, 计算多少行显示同一人种
-    z_fixed = torch.randn(n_row * n_col, DIM_GAN, dtype=torch.float).to(device)
+    row, col = 25, 10
+    row_per_class = row // NUM_CLASSES  # 25/5=5, 计算多少行显示同一人种
+    z_fixed = torch.randn(row * col, DIM_GAN, dtype=torch.float).to(device)
     # 根据训练集中的年龄范围（continuous label）选取 10 个等距点 (分位数, eg:q=0.5就是中位数)
     start_label = np.quantile(cont_labels, 0.05)
     end_label = np.quantile(cont_labels, 0.95)
     # 在线性空间中，生成某区间等距分布的num个数
-    selected_cont_labels = np.linspace(start_label, end_label, num=n_row_per_class * n_col)
+    selected_cont_labels = np.linspace(start_label, end_label, num=row_per_class * col)
     selected_class_labels = unique_class_labels  # class类别数不多, 直接全用了
-    y_cont_fixed = np.zeros(n_row * n_col, dtype=np.float32)
-    y_class_fixed = np.zeros(n_row * n_col)
-    for i in range(n_row):
-        curr_class_index = selected_class_labels[i // n_row_per_class]
-        for j in range(n_col):
+    y_cont_fixed = np.zeros(row * col, dtype=np.float32)
+    y_class_fixed = np.zeros(row * col)
+    for i in range(row):
+        curr_class_index = selected_class_labels[i // row_per_class]
+        for j in range(col):
             # 行优先下，网格中第 i 行、第 j 列的整体索引
-            idx = i * n_col + j
-            y_cont_fixed[idx] = selected_cont_labels[idx]
+            idx = i * col + j
+            y_cont_fixed[idx] = selected_cont_labels[idx % (row_per_class * col)]
             y_class_fixed[idx] = selected_class_labels[curr_class_index]
-    print(f"Fixed labels for visualization (covering all classes): {y_cont_fixed} ")
+    print(f"selected cont labels for visualization (covering all classes): {selected_cont_labels} ")
     y_cont_fixed = torch.from_numpy(y_cont_fixed).type(torch.float).view(-1, 1).to(device)
     y_class_fixed = torch.from_numpy(y_class_fixed).type(torch.long).view(-1).to(device)
 
@@ -323,12 +307,14 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 gen_imgs = netG(z_fixed, net_y2h(y_cont_fixed, y_class_fixed))
                 gen_imgs = gen_imgs.detach().cpu()
                 save_image(gen_imgs.data, os.path.join(save_images_folder, f'{niter + 1}.png'),
-                           nrow=n_row, normalize=True)
-            get_s1() and switch_s1()
+                           nrow=col, normalize=True)  # 注意: nrow表示每行摆放数量,所以=col
+            # 加个锁更好
+            if get_s1():
+                print(f"take a sample. iter {niter + 1}.") or switch_s1()
 
         # 立即保存模型并退出
         if get_s2():
-            print("============== Custom exit signal detected, saving ckpt... ==============")
+            print(f"========== Custom exit signal detected, saving ckpt{niter + 1}... ==========")
             save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD,
                        torch.get_rng_state())
             sys.exit("============== save successfully, exit. ==============")
@@ -339,3 +325,16 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
     # end for niter
 
     return netG, netD
+
+
+def save_model(save_models_folder, niter, netG, netD, optimizerG, optimizerD, rng_state):
+    save_file = os.path.join(save_models_folder, "ckpts_in_train",
+                             f"ckpt_niter_{niter + 1}.pth")
+    os.makedirs(os.path.dirname(save_file), exist_ok=True)
+    torch.save({
+        'netG_state_dict': netG.state_dict(),
+        'netD_state_dict': netD.state_dict(),
+        'optimizerG_state_dict': optimizerG.state_dict(),
+        'optimizerD_state_dict': optimizerD.state_dict(),
+        'rng_state': rng_state.cpu()
+    }, save_file)
