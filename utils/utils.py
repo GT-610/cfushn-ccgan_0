@@ -9,8 +9,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from config.config import device
-
 
 def fn_norm_labels(labels, max_label):
     """
@@ -76,7 +74,7 @@ class SimpleProgressBar:
 
 
 # torch dataset from numpy array
-class ImgsDataset_v2(torch.utils.data.Dataset):
+class ImgsDataset(torch.utils.data.Dataset):
     def __init__(self, images, cont_labels=None, class_labels=None, normalize=False):
         """
         初始化图像数据集，用于返回图像以及对应的标签信息。
@@ -87,7 +85,7 @@ class ImgsDataset_v2(torch.utils.data.Dataset):
             class_labels (np.ndarray, optional): 离散标签数组（例如人种类别），形状与 images 长度相同。默认 None。
             normalize (bool, optional): 是否对图像进行归一化（将像素值归一化到 [-1,1]）。默认 False。
         """
-        super(ImgsDataset_v2, self).__init__()
+        super(ImgsDataset, self).__init__()
         self.images = images
         self.n_images = len(self.images)
         self.cont_labels = cont_labels
@@ -165,8 +163,7 @@ def compute_entropy(labels, base=None):
 
 
 # 利用分类网络预测图像的类别标签
-def predict_class_labels_v2(net, images, batch_size=500, verbose=False, num_workers=0):
-    net = net.to(device)
+def predict_class_labels(net, images, batch_size=500, verbose=False, num_workers=0):
     net.eval()
 
     n = len(images)
@@ -174,7 +171,7 @@ def predict_class_labels_v2(net, images, batch_size=500, verbose=False, num_work
         batch_size = n
 
     # 由于这里只进行预测，不需要标签，因此调用 ImgsDataset 时只传 images 参数
-    dataset_pred = ImgsDataset_v2(images, normalize=False)
+    dataset_pred = ImgsDataset(images, normalize=False)
     dataloader_pred = torch.utils.data.DataLoader(dataset_pred, batch_size=batch_size,
                                                   shuffle=False, num_workers=num_workers)
     # 用于存放预测的类别标签，预先分配空间
@@ -184,7 +181,7 @@ def predict_class_labels_v2(net, images, batch_size=500, verbose=False, num_work
         if verbose:
             pb = SimpleProgressBar()
         for batch_idx, batch_images in enumerate(dataloader_pred):
-            batch_images = batch_images.type(torch.float).to(device)
+            batch_images = batch_images.type(torch.float).to(net.device)
             batch_size_curr = len(batch_images)
             # 这里调用 net(batch_images) 得到的是一个三元组，取第二个元素 y_class
             _, y_class, _ = net(batch_images)
@@ -192,8 +189,8 @@ def predict_class_labels_v2(net, images, batch_size=500, verbose=False, num_work
             _, batch_class_labels_pred = torch.max(y_class.data, 1)
             # 将预测结果保存到数组中
             class_labels_pred[nimgs_got:(
-                        nimgs_got + batch_size_curr)] = batch_class_labels_pred.detach().cpu().numpy().reshape(
-                -1)
+                    nimgs_got + batch_size_curr)] = batch_class_labels_pred.detach().cpu().numpy().reshape(
+                    -1)
             nimgs_got += batch_size_curr
             if verbose:
                 pb.update(min((float(nimgs_got) / n) * 100, 100))

@@ -6,6 +6,16 @@
 from tabulate import tabulate
 
 
+# 查看类别标签与类别索引
+def show_class_labels_map(unique_labels: []):
+    index_header = ["index"] + [str(i) for i in range(len(unique_labels))]
+    data = ["label"] + [str(i) for i in unique_labels]
+    print("类标签与索引对应关系:\n", tabulate([data], headers=index_header, tablefmt="pretty"))
+    reverse_label_mapping = {original_label: index for index, original_label in
+                             enumerate(unique_labels)}
+    return reverse_label_mapping
+
+
 # 查看数据在各标签分布情况
 def get_distribution_table(num_log, unique_row_labels, unique_col_labels, cols_per_page=20):
     """

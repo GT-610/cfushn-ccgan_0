@@ -4,17 +4,16 @@ https://github.com/christiancosgrove/pytorch-spectral-normalization-gan
 chainer: https://github.com/pfnet-research/sngan_projection
 """
 
-# from spectral_normalization import SpectralNorm
 import numpy as np
-# ResNet generator and discriminator
 import torch
 from torch import nn
 from torch.nn.utils import spectral_norm
 
-from config.config import device
+from config import cfg
 
 channels = 3
 bias = True
+device = cfg.device
 
 
 ######################################################################################################################
@@ -45,7 +44,7 @@ class ResBlockGenerator(nn.Module):
         nn.init.xavier_uniform_(self.conv1.weight.data, np.sqrt(2))
         nn.init.xavier_uniform_(self.conv2.weight.data, np.sqrt(2))
 
-        # conditonal case
+        # conditional case
         self.condgn1 = ConditionalBatchNorm2d(in_channels, dim_embed)
         self.condgn2 = ConditionalBatchNorm2d(out_channels, dim_embed)
         self.relu = nn.ReLU()
@@ -85,9 +84,9 @@ class ResBlockGenerator(nn.Module):
         return out
 
 
-class sngan_generator(nn.Module):
+class SnganGenerator(nn.Module):
     def __init__(self, nz=256, dim_embed=128, gen_ch=64):
-        super(sngan_generator, self).__init__()
+        super(SnganGenerator, self).__init__()
         self.z_dim = nz
         self.dim_embed = dim_embed
         self.gen_ch = gen_ch
@@ -109,15 +108,15 @@ class sngan_generator(nn.Module):
                 nn.Tanh()
         )
 
-    def forward(self, z, y):  # y is embedded in the feature space
+    def forward(self, z, h):  # h is embedded from y, h is in the feature space
         z = z.view(z.size(0), z.size(1))
         out = self.dense(z)
         out = out.view(-1, self.gen_ch * 16, 4, 4)
 
-        out = self.genblock0(out, y)
-        out = self.genblock1(out, y)
-        out = self.genblock2(out, y)
-        out = self.genblock3(out, y)
+        out = self.genblock0(out, h)
+        out = self.genblock1(out, h)
+        out = self.genblock2(out, h)
+        out = self.genblock3(out, h)
         out = self.final(out)
 
         return out
@@ -197,9 +196,9 @@ class FirstResBlockDiscriminator(nn.Module):
         return self.model(x) + self.bypass(x)
 
 
-class sngan_discriminator(nn.Module):
+class SnganDiscriminator(nn.Module):
     def __init__(self, dim_embed=128, disc_ch=64):
-        super(sngan_discriminator, self).__init__()
+        super(SnganDiscriminator, self).__init__()
         self.dim_embed = dim_embed
         self.disc_ch = disc_ch
 
@@ -221,22 +220,22 @@ class sngan_discriminator(nn.Module):
         nn.init.xavier_uniform_(self.linear2.weight.data, 1.)
         self.linear2 = spectral_norm(self.linear2)
 
-    def forward(self, x, y):
+    def forward(self, x, h):
         output = self.discblock1(x)
         output = self.discblock2(output)
         output = self.discblock3(output)
 
         # output = torch.sum(output, dim=(2,3))
         output = output.view(-1, self.disc_ch * 16 * 4 * 4)
-        output_y = torch.sum(output * self.linear2(y), 1, keepdim=True)
-        output = self.linear1(output) + output_y
+        output_h = torch.sum(output * self.linear2(h), 1, keepdim=True)
+        output = self.linear1(output) + output_h
 
         return output.view(-1, 1)
 
 
 if __name__ == "__main__":
-    netG = sngan_generator(nz=256, dim_embed=128).to(device)
-    netD = sngan_discriminator(dim_embed=128).to(device)
+    netG = SnganGenerator(nz=256, dim_embed=128).to(device)
+    netD = SnganDiscriminator(dim_embed=128).to(device)
 
     N = 4
     z = torch.randn(N, 256).to(device)
@@ -253,5 +252,5 @@ if __name__ == "__main__":
         return {'Total': total_num, 'Trainable': trainable_num}
 
 
-    print(get_parameter_number(netG))
-    print(get_parameter_number(netD))
+    print('G:', get_parameter_number(netG))
+    print('D:', get_parameter_number(netD))

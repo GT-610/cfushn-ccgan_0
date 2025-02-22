@@ -1,71 +1,83 @@
-from config.config import *
-from models.ResNet_embed import *
+from models.resnet_x2y import *
+from models.resnet_y2h import ResNetY2H
 from models.sngan import *
-from train_ccgan import train_ccgan
-from train_net_for_label_embed import *
 from utils.utils import *
+from .train_ccgan import train_ccgan
+from .train_embed import *
+
+device = cfg.device
 
 
-def train_process(data, kernel_sigma, kappa, path_to_output):
+def train_process(data):
     images, cont_labels, class_labels = data
+
+    # -------------------- 确定GAN输出目录 --------------------
+    # 目录名中有变量拼接 (cfg.gan_output_path@property方法能动态get)
+    os.makedirs(cfg.gan_output_path, exist_ok=True)
+    print(f'output_path:{cfg.gan_output_path}\n')
 
     # -------------------- 构建训练集和 DataLoader --------------------
     # 这里假设 ImgsDataset 类已经支持同时接受三个参数：图像、连续标签、离散标签，并自动归一化图像
-    train_set = ImgsDataset_v2(images, cont_labels, class_labels, normalize=True)
-    train_loader_embed_net = torch.utils.data.DataLoader(train_set, batch_size=BATCH_SIZE_EMBED,
-                                                         shuffle=True, num_workers=NUM_WORKERS)
+    train_set = ImgsDataset(images, cont_labels, class_labels, normalize=True)
+    train_loader_embed_net = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size_embed,
+                                                         shuffle=True, num_workers=cfg.num_workers)
 
     #######################################################################################
     '''               Pre-trained CNN and GAN for label embedding                       '''
     #######################################################################################
     # -------------------- 定义预训练模型的 checkpoint 文件名 --------------------
-    path_to_embed_models = os.path.join(ROOT_PATH, 'output/embed_models_v2')  # 固定该版
+    path_to_embed_models = os.path.join(cfg.output_path, 'embed_models')  # 固定该版
     os.makedirs(path_to_embed_models, exist_ok=True)
+    path_to_embed_ckpt = os.path.join(path_to_embed_models, "embed_x2y_ckpt_in_train")
+    os.makedirs(path_to_embed_ckpt, exist_ok=True)
     net_embed_filename_ckpt = os.path.join(path_to_embed_models, 'ckpt_{}_epoch_{}_seed_{}.pth'
-                                           .format(NET_EMBED_TYPE, EPOCH_CNN_EMBED, SEED))
+                                           .format(cfg.net_embed_type, cfg.epoch_cnn_embed,
+                                                   cfg.seed))
     net_y2h_filename_ckpt = os.path.join(path_to_embed_models, 'ckpt_net_y2h_epoch_{}_seed_{}.pth'
-                                         .format(EPOCH_NET_Y2H, SEED))
+                                         .format(cfg.epoch_net_y2h, cfg.seed))
 
     # -------------------- 构建图像嵌入模型 net_embed --------------------
-    net_embed = None
-    if NET_EMBED_TYPE == "ResNet18_embed":
-        net_embed = ResNet18_embed_v2(dim_embed=DIM_EMBED)
-    elif NET_EMBED_TYPE == "ResNet34_embed":
-        net_embed = ResNet34_embed_v2(dim_embed=DIM_EMBED)
-    elif NET_EMBED_TYPE == "ResNet50_embed":
-        net_embed = ResNet50_embed_v2(dim_embed=DIM_EMBED)
-    net_embed = net_embed.to(device)
+    net_x2y = None
+    if cfg.net_embed_type == "ResNet18_embed":
+        net_x2y = ResNet18_x2y(dim_embed=cfg.dim_embed)
+    elif cfg.net_embed_type == "ResNet34_embed":
+        net_x2y = ResNet34_x2y(dim_embed=cfg.dim_embed)
+    elif cfg.net_embed_type == "ResNet50_embed":
+        net_x2y = ResNet50_x2y(dim_embed=cfg.dim_embed)
+    net_x2y = net_x2y.to(device)
 
     # -------------------- 构建标签映射模型 net_y2h --------------------
-    net_y2h = model_y2h_v2(dim_embed=DIM_EMBED)
+    net_y2h = ResNetY2H(dim_embed=cfg.dim_embed)
     net_y2h = net_y2h.to(device)
 
     ## (1). 训练 net_embed：将图像映射到嵌入空间，然后通过 h2y 映射回标签（x2h+h2y）
     if not os.path.isfile(net_embed_filename_ckpt):
-        if GPU_PARALLEL:
-            net_embed = nn.DataParallel(net_embed)
+        if cfg.gpu_parallel:
+            net_x2y = nn.DataParallel(net_x2y)
         print("Start training CNN for label embedding >>>")
-        net_embed = train_net_embed(net=net_embed,
-                                    trainloader=train_loader_embed_net, testloader=None,
-                                    epochs=EPOCH_CNN_EMBED, resume_epoch=RESUME_EPOCH_CNN_EMBED,
-                                    lr_base=BASE_LR_X2Y, lr_decay_factor=0.1,
-                                    lr_decay_epochs=[80, 140],
-                                    weight_decay=1e-4, path_to_ckpt=path_to_embed_models)
+        net_x2y = train_net_embed(net=net_x2y,
+                                  train_loader=train_loader_embed_net, test_loader=None,
+                                  epochs=cfg.epoch_cnn_embed,
+                                  resume_epoch=cfg.resume_epoch_cnn_embed,
+                                  lr_base=cfg.base_lr_x2y, lr_decay_factor=0.1,
+                                  lr_decay_epochs=[80, 140],
+                                  weight_decay=1e-4, path_to_ckpt=path_to_embed_ckpt)
         # 保存训练好的 net_embed 模型 (对于有DataParallel包裹的需要先.module)
-        net_embed = net_embed.module if GPU_PARALLEL else net_embed
-        torch.save({'net_state_dict': net_embed.state_dict()}, net_embed_filename_ckpt)
+        net_x2y = net_x2y.module if cfg.gpu_parallel else net_x2y
+        torch.save({'net_state_dict': net_x2y.state_dict()}, net_embed_filename_ckpt)
     else:
         print("net_embed ckpt already exists")
         print("Loading...")
         checkpoint = torch.load(net_embed_filename_ckpt, weights_only=True, map_location=device)
-        net_embed.load_state_dict(checkpoint['net_state_dict'])
+        net_x2y.load_state_dict(checkpoint['net_state_dict'])
         print("Loaded successfully.\n")
 
     ## (2). 训练 net_y2h：将标签映射到与图像嵌入相同的空间
     if not os.path.isfile(net_y2h_filename_ckpt):
         print("Start training net_y2h >>>")
-        net_y2h = train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=EPOCH_NET_Y2H,
-                                lr_base=BASE_LR_Y2H, lr_decay_factor=0.1,
+        net_y2h = train_net_y2h(cont_labels, class_labels, net_y2h, net_x2y,
+                                epochs=cfg.epoch_net_y2h,
+                                lr_base=cfg.base_lr_y2h, lr_decay_factor=0.1,
                                 lr_decay_epochs=[150, 250, 350],
                                 weight_decay=1e-4, batch_size=128)
         # 保存训练好的 net_y2h 模型
@@ -78,44 +90,47 @@ def train_process(data, kernel_sigma, kappa, path_to_output):
         print("Loaded successfully.\n")
 
     ## 测试一次
-    test_embed(net_embed, net_y2h, cont_labels)
+    test_embed(net_x2y, net_y2h, cont_labels)
 
     #######################################################################################
     '''                                    GAN training                                 '''
     #######################################################################################
-    print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(GAN_ARCH, THRESHOLD_TYPE,
-                                                                    kernel_sigma, kappa))
-    save_models_folder = os.path.join(path_to_output, 'saved_models')
+    print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(
+            cfg.gan_arch, cfg.threshold_type, cfg.kernel_sigma, cfg.kappa))
+    save_models_folder = os.path.join(cfg.gan_output_path, 'saved_models')
     os.makedirs(save_models_folder, exist_ok=True)
-    save_images_folder = os.path.join(path_to_output, 'saved_images')
+    save_images_folder = os.path.join(cfg.gan_output_path, 'saved_images')
     os.makedirs(save_images_folder, exist_ok=True)
-    save_images_in_train_folder = os.path.join(save_images_folder, 'images_in_train')
-    os.makedirs(save_images_in_train_folder, exist_ok=True)
+    ckpts_in_train_folder = os.path.join(save_models_folder, 'ckpts_in_train')
+    os.makedirs(ckpts_in_train_folder, exist_ok=True)
+    images_in_train_folder = os.path.join(save_images_folder, 'images_in_train')
+    os.makedirs(images_in_train_folder, exist_ok=True)
     start = timeit.default_timer()
+
     print("Begin Training >>>")
-    ckpt_gan_path = os.path.join(save_models_folder, 'ckpt_niter_{}.pth'.format(N_ITERS))
+    ckpt_gan_path = os.path.join(save_models_folder, f'ckpt_niter_{cfg.n_iters}.pth')
     print(ckpt_gan_path)
     netG = None
     netD = None
     if not os.path.isfile(ckpt_gan_path):
         # 根据 GAN 架构选择生成器与判别器
-        if GAN_ARCH == "SAGAN":
+        if cfg.gan_arch == "SAGAN":
             # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
             # netD = sagan_discriminator(dim_embed=dim_embed).to(device)
             pass
         else:
-            netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
-            netD = sngan_discriminator(dim_embed=DIM_EMBED).to(device)
+            netG = SnganGenerator(nz=cfg.dim_gan, dim_embed=cfg.dim_embed).to(device)
+            netD = SnganDiscriminator(dim_embed=cfg.dim_embed).to(device)
         # 使用多GPU并行训练
-        if GPU_PARALLEL:
+        if cfg.gpu_parallel:
             netG = nn.DataParallel(netG)
             netD = nn.DataParallel(netD)
 
         # 调用 train_ccgan 函数进行 GAN 训练
-        netG, _ = train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels,
+        netG, _ = train_ccgan(cfg.kernel_sigma, cfg.kappa, images, cont_labels, class_labels,
                               netG, netD, net_y2h,
-                              save_images_folder=save_images_in_train_folder,
-                              save_models_folder=save_models_folder)
+                              images_in_train_folder=images_in_train_folder,
+                              ckpts_in_train_folder=ckpts_in_train_folder)
         # 保存训练好的生成器模型
         torch.save({'netG_state_dict': netG.state_dict()}, ckpt_gan_path)
         stop = timeit.default_timer()
@@ -124,21 +139,21 @@ def train_process(data, kernel_sigma, kappa, path_to_output):
         print("Loading pre-trained generator >>>")
         checkpoint = torch.load(ckpt_gan_path, weights_only=True, map_location=device)
         # 根据 GAN 架构选择生成器
-        if GAN_ARCH == "SAGAN":
+        if cfg.gan_arch == "SAGAN":
             # netG = sagan_generator(nz=dim_gan, dim_embed=dim_embed).to(device)
             pass
         else:
-            netG = sngan_generator(nz=DIM_GAN, dim_embed=DIM_EMBED).to(device)
-        if GPU_PARALLEL:
+            netG = SnganGenerator(nz=cfg.dim_gan, dim_embed=cfg.dim_embed).to(device)
+        if cfg.gpu_parallel:
             netG = nn.DataParallel(netG)
         netG.load_state_dict(checkpoint['netG_state_dict'])
         print("Loaded successfully.\n")
 
-    return netG, net_y2h, path_to_output
+    return netG, net_y2h
 
 
 def test_embed(net_embed, net_y2h, cont_labels):
-    ## -------------------- 简单测试：检查连续标签映射是否正确 --------------------
+    # -------------------- 简单测试：标签映射是否正确 --------------------
     net_embed.eval()
     net_y2h.eval()
     # 从连续标签中随机选择 10 个用于测试映射效果

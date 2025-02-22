@@ -34,7 +34,7 @@ from scipy.stats import entropy
 from torch.autograd import Variable
 from torch.nn import functional as F
 
-from .utils import SimpleProgressBar, ImgsDataset_v2
+from .utils import SimpleProgressBar, ImgsDataset
 
 
 # 归一化输入图像到 [-1, 1] 范围
@@ -194,7 +194,7 @@ def cal_labelscore(PreNet, images, labels_assi, min_label_before_shift, max_labe
     img_size = images.shape[2]
     labels_assi = labels_assi.reshape(-1)
 
-    eval_trainset = ImgsDataset_v2(images, labels_assi, normalize=False)
+    eval_trainset = ImgsDataset(images, labels_assi, normalize=False)
     eval_dataloader = torch.utils.data.DataLoader(eval_trainset, batch_size=batch_size,
                                                   shuffle=False, num_workers=num_workers)
 
@@ -262,7 +262,7 @@ def inception_score(imgs, num_classes, net, cuda=True, batch_size=32, splits=1,
         dtype = torch.FloatTensor
 
     # Set up dataloader
-    dataset = ImgsDataset_v2(imgs, labels=None, normalize=normalize_img)
+    dataset = ImgsDataset(imgs, labels=None, normalize=normalize_img)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size)
 
     # Load inception model

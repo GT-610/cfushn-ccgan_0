@@ -3,3 +3,6 @@
 # @Author  : cfushn
 # @Comments: 
 # @Software: PyCharm
+
+from .base_config import cfg
+from .initializer import init_config

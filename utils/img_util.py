@@ -3,7 +3,7 @@ import torch
 from torchvision.utils import make_grid
 
 
-def img_with_sep(imgs_data, nrow, h_sep_gap=5, v_sep_gap=0, width=1):
+def img_with_sep(imgs_data, nrow, h_sep_gap=1, v_sep_gap=0, width=2):
     """
     生成一个带有分隔线的图像网格：
       - 将输入的 imgs_data (N, C, H, W) 按 nrow 张图像一行排列；

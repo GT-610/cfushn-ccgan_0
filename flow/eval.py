@@ -1,13 +1,17 @@
+import os
+
 import torch.nn as nn
 from PIL import Image
 from tqdm import tqdm  # 显示进度条
 
-from config.config import *
+from config import cfg
 from models.eval.ResNet_class_eval import ResNet34_class_eval
 from models.eval.ResNet_regre_eval import ResNet34_regre_eval
 from models.eval.autoencoder import encoder
 from utils.eval_metrics import cal_FID, inception_score, cal_labelscore
 from utils.utils import *  # 项目中常用工具函数
+
+device = cfg.device
 
 
 def sample(netG, net_y2h, cont_labels, class_labels, batch_size=500,
@@ -31,7 +35,7 @@ def sample(netG, net_y2h, cont_labels, class_labels, batch_size=500,
             pb = SimpleProgressBar()
         n_img_got = 0
         while n_img_got < n_fake:
-            z = torch.randn(batch_size, DIM_GAN, dtype=torch.float).to(device)
+            z = torch.randn(batch_size, cfg.dim_gan, dtype=torch.float).to(device)
             # 获取当前批次的连续标签
             y_cont = torch.from_numpy(fake_cont_labels[n_img_got:(n_img_got + batch_size)]).type(
                     torch.float).view(-1, 1).to(device)
@@ -63,41 +67,41 @@ def sample(netG, net_y2h, cont_labels, class_labels, batch_size=500,
     return fake_images, fake_labels
 
 
-def evaluate(origin_data, netG, net_y2h, path_to_output):
-    if COMP_FID:
+def evaluate_process(origin_data, netG, net_y2h):
+    if cfg.comp_fid:
         raw_images, raw_cont_labels, _ = origin_data
         # -------------------- 加载用于评估的预训练模型 --------------------
         # 用于 FID 计算的编码器
         PreNetFID = encoder(dim_bottleneck=512).to(device)
-        if GPU_PARALLEL:
+        if cfg.gpu_parallel:
             PreNetFID = nn.DataParallel(PreNetFID)
-        Filename_PreCNNForEvalGANs = os.path.join(EVAL_PATH,
+        Filename_PreCNNForEvalGANs = os.path.join(cfg.eval_path,
                                                   'ckpt_AE_epoch_200_seed_2020_CVMode_False.pth')
         checkpoint_PreNet = torch.load(Filename_PreCNNForEvalGANs, weights_only=True)
         PreNetFID.load_state_dict(checkpoint_PreNet['net_encoder_state_dict'])
 
         # 用于多样性评价（预测种族）的分类器
-        PreNetDiversity = ResNet34_class_eval(num_classes=NUM_CLASSES,
+        PreNetDiversity = ResNet34_class_eval(num_classes=cfg.num_classes,
                                               ngpu=torch.cuda.device_count()).to(device)
-        Filename_PreCNNForEvalGANs_Diversity = os.path.join(EVAL_PATH,
+        Filename_PreCNNForEvalGANs_Diversity = os.path.join(cfg.eval_path,
                                                             'ckpt_PreCNNForEvalGANs_ResNet34_class_epoch_200_seed_2020_classify_5_races_CVMode_False.pth')
         checkpoint_PreNet = torch.load(Filename_PreCNNForEvalGANs_Diversity, weights_only=True)
         PreNetDiversity.load_state_dict(checkpoint_PreNet['net_state_dict'])
 
         # 用于计算 Label Score 的回归网络
         PreNetLS = ResNet34_regre_eval(ngpu=torch.cuda.device_count()).to(device)
-        Filename_PreCNNForEvalGANs_LS = os.path.join(EVAL_PATH,
+        Filename_PreCNNForEvalGANs_LS = os.path.join(cfg.eval_path,
                                                      'ckpt_PreCNNForEvalGANs_ResNet34_regre_epoch_200_seed_2020_CVMode_False.pth')
         checkpoint_PreNet = torch.load(Filename_PreCNNForEvalGANs_LS, weights_only=True)
         PreNetLS.load_state_dict(checkpoint_PreNet['net_state_dict'])
 
         #####################
         # 生成每个连续标签下指定数量的假图像
-        print("Start sampling {} fake images per label from GAN >>>".format(N_FAKE_PER_LABEL))
+        print("Start sampling {} fake images per label from GAN >>>".format(cfg.n_fake_per_label))
         # 构造评价条件。这里假设你想针对每个连续标签生成假图像，
         # 同时采用固定离散标签条件，例如选择类别 2。你也可以按需要设置为其他策略。
-        eval_cont_labels = np.arange(1, MAX_LABEL + 1)  # 原始连续标签（例如年龄）
-        eval_cont_labels_norm = fn_norm_labels(eval_cont_labels, MAX_LABEL)  # 归一化到 [0,1]
+        eval_cont_labels = np.arange(1, cfg.max_label + 1)  # 原始连续标签（例如年龄）
+        eval_cont_labels_norm = fn_norm_labels(eval_cont_labels, cfg.max_label)  # 归一化到 [0,1]
         fixed_class = 2  # 固定的离散标签条件（例如类别2），请根据实际情况调整
 
         num_eval_labels = len(eval_cont_labels_norm)
@@ -105,12 +109,12 @@ def evaluate(origin_data, netG, net_y2h, path_to_output):
         for i in tqdm(range(num_eval_labels)):
             label_i = eval_cont_labels_norm[i]
             # 为每个连续标签构造批量样本，连续标签数组形状 (nfake_per_label, 1)
-            curr_cont = label_i * np.ones([N_FAKE_PER_LABEL, 1])
+            curr_cont = label_i * np.ones([cfg.n_fake_per_label, 1])
             # 同时构造对应的离散标签数组，全部为 fixed_class
-            curr_class = fixed_class * np.ones([N_FAKE_PER_LABEL, 1])
+            curr_class = fixed_class * np.ones([cfg.n_fake_per_label, 1])
             curr_fake_images, curr_fake_labels = sample(netG, net_y2h, curr_cont,
                                                         curr_class,
-                                                        SAMP_BATCH_SIZE)
+                                                        cfg.samp_batch_size)
             if i == 0:
                 fake_images = curr_fake_images
                 fake_labels_assigned = curr_fake_labels.reshape(-1)
@@ -118,21 +122,21 @@ def evaluate(origin_data, netG, net_y2h, path_to_output):
                 fake_images = np.concatenate((fake_images, curr_fake_images), axis=0)
                 fake_labels_assigned = np.concatenate(
                         (fake_labels_assigned, curr_fake_labels.reshape(-1)))
-        assert len(fake_images) == N_FAKE_PER_LABEL * num_eval_labels
-        assert len(fake_labels_assigned) == N_FAKE_PER_LABEL * num_eval_labels
+        assert len(fake_images) == cfg.n_fake_per_label * num_eval_labels
+        assert len(fake_labels_assigned) == cfg.n_fake_per_label * num_eval_labels
 
         ## -------------------- 如果需要，将假图像导出以便 NIQE 评估 --------------------
-        if DUMP_FAKE_FOR_NIQE:
+        if cfg.dump_fake_for_niqe:
             print("\n Dumping fake images for NIQE...")
-            if NIQE_DUMP_PATH == "None":
-                dump_fake_images_folder = os.path.join(path_to_output, 'saved_images',
+            if cfg.niqe_dump_path == "None":
+                dump_fake_images_folder = os.path.join(cfg.gan_output_path, 'saved_images',
                                                        'fake_images')
             else:
-                dump_fake_images_folder = os.path.join(NIQE_DUMP_PATH, 'fake_images')
+                dump_fake_images_folder = os.path.join(cfg.niqe_dump_path, 'fake_images')
             os.makedirs(dump_fake_images_folder, exist_ok=True)
             for i in tqdm(range(len(fake_images))):
                 # 这里将连续标签反归一化（乘以 max_label）
-                label_i = int(fake_labels_assigned[i] * MAX_LABEL)
+                label_i = int(fake_labels_assigned[i] * cfg.max_label)
                 filename_i = os.path.join(dump_fake_images_folder, "{}_{}.png".format(i, label_i))
                 os.makedirs(os.path.dirname(filename_i), exist_ok=True)
                 image_i = fake_images[i]
@@ -146,33 +150,32 @@ def evaluate(origin_data, netG, net_y2h, path_to_output):
 
         #####################
         # 评估：计算 FID、Label Score、以及类别多样性指标（Entropy）
-        real_labels = raw_cont_labels / MAX_LABEL  # 对连续标签归一化
+        real_labels = raw_cont_labels / cfg.max_label  # 对连续标签归一化
         nfake_all = len(fake_images)
         nreal_all = len(raw_images)
         real_images = raw_images
 
-        if COMP_IS_AND_FID_ONLY:
+        if cfg.comp_is_and_fid_only:
             #####################
             # 计算整体 FID 和 IS
-            indx_shuffle_real = np.arange(nreal_all);
+            indx_shuffle_real = np.arange(nreal_all)
             np.random.shuffle(indx_shuffle_real)
-            indx_shuffle_fake = np.arange(nfake_all);
+            indx_shuffle_fake = np.arange(nfake_all)
             np.random.shuffle(indx_shuffle_fake)
             FID = cal_FID(PreNetFID, real_images[indx_shuffle_real], fake_images[indx_shuffle_fake],
                           batch_size=200, resize=None, norm_img=True)
-            print("\n {}: FID of {} fake images: {:.3f}.".format(GAN_ARCH, nfake_all, FID))
+            print("\n {}: FID of {} fake images: {:.3f}.".format(cfg.gan_arch, nfake_all, FID))
             IS, IS_std = inception_score(imgs=fake_images[indx_shuffle_fake], num_classes=5,
                                          net=PreNetDiversity,
                                          cuda=True, batch_size=200, splits=10, normalize_img=True)
             print(
-                    "\n {}: IS of {} fake images: {:.3f}({:.3f}).".format(GAN_ARCH, nfake_all,
-                                                                          IS,
-                                                                          IS_std))
+                    "\n {}: IS of {} fake images: {:.3f}({:.3f}).".format(
+                            cfg.gan_arch, nfake_all, IS, IS_std))
         else:
             #####################
             # 分滑动窗口评估 FID、Label Score 和类别多样性（Entropy）
-            center_start = 1 + FID_RADIUS
-            center_stop = MAX_LABEL - FID_RADIUS
+            center_start = 1 + cfg.fid_radius
+            center_stop = cfg.max_label - cfg.fid_radius
             centers_loc = np.arange(center_start, center_stop + 1)
             FID_over_centers = np.zeros(len(centers_loc))
             entropies_over_centers = np.zeros(len(centers_loc))
@@ -180,8 +183,8 @@ def evaluate(origin_data, netG, net_y2h, path_to_output):
             num_realimgs_over_centers = np.zeros(len(centers_loc))
             for i in range(len(centers_loc)):
                 center = centers_loc[i]
-                interval_start = (center - FID_RADIUS) / MAX_LABEL
-                interval_stop = (center + FID_RADIUS) / MAX_LABEL
+                interval_start = (center - cfg.fid_radius) / cfg.max_label
+                interval_stop = (center + cfg.fid_radius) / cfg.max_label
                 indx_real = \
                     np.where(
                             (real_labels >= interval_start) * (
@@ -199,74 +202,69 @@ def evaluate(origin_data, netG, net_y2h, path_to_output):
                 fake_labels_assigned_curr = fake_labels_assigned[indx_fake]
                 FID_over_centers[i] = cal_FID(PreNetFID, real_images_curr, fake_images_curr,
                                               batch_size=200, resize=None)
-                predicted_class_labels = predict_class_labels_v2(PreNetDiversity, fake_images_curr,
-                                                                 batch_size=200,
-                                                                 num_workers=NUM_WORKERS)
+                predicted_class_labels = predict_class_labels(PreNetDiversity, fake_images_curr,
+                                                              batch_size=200,
+                                                              num_workers=cfg.num_workers)
                 entropies_over_centers[i] = compute_entropy(predicted_class_labels)
                 labelscores_over_centers[i], _ = cal_labelscore(PreNetLS, fake_images_curr,
                                                                 fake_labels_assigned_curr,
                                                                 min_label_before_shift=0,
-                                                                max_label_after_shift=MAX_LABEL,
+                                                                max_label_after_shift=cfg.max_label,
                                                                 batch_size=200, resize=None,
-                                                                num_workers=NUM_WORKERS)
+                                                                num_workers=cfg.num_workers)
                 print("\r Center:{}; Real:{}; Fake:{}; FID:{:.3f}; LS:{:.3f}; ET:{:.3f}.".format(
                         center, len(real_images_curr), len(fake_images_curr),
                         FID_over_centers[i], labelscores_over_centers[i],
                         entropies_over_centers[i]))
-            print("\n {} SFID: {:.3f}({:.3f}); min/max: {:.3f}/{:.3f}.".format(GAN_ARCH,
-                                                                               np.mean(
-                                                                                       FID_over_centers),
-                                                                               np.std(
-                                                                                       FID_over_centers),
-                                                                               np.min(
-                                                                                       FID_over_centers),
-                                                                               np.max(
-                                                                                       FID_over_centers)))
+            print("\n {} SFID: {:.3f}({:.3f}); min/max: {:.3f}/{:.3f}.".format(
+                    cfg.gan_arch, np.mean(FID_over_centers),
+                    np.std(FID_over_centers),
+                    np.min(FID_over_centers),
+                    np.max(FID_over_centers)))
             print("\n {} LS over centers: {:.3f}({:.3f}); min/max: {:.3f}/{:.3f}.".format(
-                    GAN_ARCH,
+                    cfg.gan_arch,
                     np.mean(labelscores_over_centers),
                     np.std(labelscores_over_centers),
                     np.min(labelscores_over_centers),
                     np.max(labelscores_over_centers)))
             print("\n {} entropy over centers: {:.3f}({:.3f}); min/max: {:.3f}/{:.3f}.".format(
-                    GAN_ARCH,
+                    cfg.gan_arch,
                     np.mean(entropies_over_centers), np.std(entropies_over_centers),
                     np.min(entropies_over_centers), np.max(entropies_over_centers)))
-            dump_fid_ls_entropy_over_centers_filename = os.path.join(path_to_output,
+            dump_fid_ls_entropy_over_centers_filename = os.path.join(cfg.gan_output_path,
                                                                      'fid_ls_entropy_over_centers')
             np.savez(dump_fid_ls_entropy_over_centers_filename, fids=FID_over_centers,
                      labelscores=labelscores_over_centers,
                      entropies=entropies_over_centers, nrealimgs=num_realimgs_over_centers,
                      centers=centers_loc)
-            indx_shuffle_real = np.arange(nreal_all);
+            indx_shuffle_real = np.arange(nreal_all)
             np.random.shuffle(indx_shuffle_real)
-            indx_shuffle_fake = np.arange(nfake_all);
+            indx_shuffle_fake = np.arange(nfake_all)
             np.random.shuffle(indx_shuffle_fake)
             FID = cal_FID(PreNetFID, real_images[indx_shuffle_real], fake_images[indx_shuffle_fake],
                           batch_size=200, resize=None, norm_img=True)
-            print("\n {}: FID of {} fake images: {:.3f}.".format(GAN_ARCH, nfake_all, FID))
+            print("\n {}: FID of {} fake images: {:.3f}.".format(cfg.gan_arch, nfake_all, FID))
             ls_mean_overall, ls_std_overall = cal_labelscore(PreNetLS, fake_images,
                                                              fake_labels_assigned,
                                                              min_label_before_shift=0,
-                                                             max_label_after_shift=MAX_LABEL,
+                                                             max_label_after_shift=cfg.max_label,
                                                              batch_size=200, resize=None,
                                                              norm_img=True,
-                                                             num_workers=NUM_WORKERS)
+                                                             num_workers=cfg.num_workers)
             print(
-                    "\n {}: overall LS of {} fake images: {:.3f}({:.3f}).".format(GAN_ARCH,
+                    "\n {}: overall LS of {} fake images: {:.3f}({:.3f}).".format(cfg.gan_arch,
                                                                                   nfake_all,
                                                                                   ls_mean_overall,
                                                                                   ls_std_overall))
-            eval_results_logging_fullpath = os.path.join(path_to_output,
-                                                         'eval_results_{}.txt'.format(
-                                                                 GAN_ARCH))
+            eval_results_logging_fullpath = os.path.join(
+                    cfg.gan_output_path, 'eval_results_{}.txt'.format(cfg.gan_arch))
             if not os.path.isfile(eval_results_logging_fullpath):
                 with open(eval_results_logging_fullpath, "w") as eval_results_logging_file:
                     eval_results_logging_file.write("")
             with open(eval_results_logging_fullpath, 'a') as eval_results_logging_file:
                 eval_results_logging_file.write(
                         "\n===================================================================================================")
-                eval_results_logging_file.write("\n Radius: {}.  \n".format(FID_RADIUS))
+                eval_results_logging_file.write("\n Radius: {}.  \n".format(cfg.fid_radius))
                 # print(args, file=eval_results_logging_file)
                 eval_results_logging_file.write(
                         "\n SFID: {:.3f} ({:.3f}).".format(np.mean(FID_over_centers),

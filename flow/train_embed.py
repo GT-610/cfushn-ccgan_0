@@ -5,13 +5,18 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from config.config import device
+from config import cfg
+from utils.ipc_util import get_s1, switch_s1
+
+device = cfg.device
 
 
-# -------------------------------------------------------------
-def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
-        lr_base=0.01, lr_decay_factor=0.1, lr_decay_epochs=[80, 140],
+def train_net_embed(net, train_loader, test_loader, epochs=200, resume_epoch=0,
+        lr_base=0.01, lr_decay_factor=0.1, lr_decay_epochs=None,
         weight_decay=1e-4, path_to_ckpt=None):
+    if lr_decay_epochs is None:
+        lr_decay_epochs = [80, 140]
+
     # 内部函数：调整学习率，根据当前 epoch 对学习率进行衰减
     def adjust_learning_rate_1(optimizer, epoch):
         """根据 lr_decay_epochs 列表中的设定降低学习率。"""
@@ -34,9 +39,8 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
                                 weight_decay=weight_decay)
 
     # 如果指定了 checkpoint 路径且 resume_epoch > 0，则加载断点续训数据
-    if path_to_ckpt is not None and resume_epoch > 0:
-        save_file = path_to_ckpt + "/embed_x2y_ckpt_in_train/embed_x2y_checkpoint_epoch_{}.pth".format(
-                resume_epoch)
+    if resume_epoch > 0:
+        save_file = path_to_ckpt + "/embed_x2y_checkpoint_epoch_{}.pth".format(resume_epoch)
         checkpoint = torch.load(save_file)
         net.load_state_dict(checkpoint['net_state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
@@ -49,7 +53,7 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
         train_loss = 0
         adjust_learning_rate_1(optimizer, epoch)  # 调整当前 epoch 的学习率
         for _, (batch_train_images, batch_train_labels_cont, batch_train_labels_class) in enumerate(
-                trainloader):
+                train_loader):
             batch_train_images = batch_train_images.type(torch.float).to(device)
             # batch_train_labels = batch_train_labels.type(torch.float).view(-1, 1).to(device)
             batch_train_labels_cont = batch_train_labels_cont.type(torch.float).view(-1, 1).to(
@@ -64,6 +68,8 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
             loss_cont = criterion_cont(y_cont, batch_train_labels_cont)
             # 计算分类损失：离散标签预测 (logits) 与真实标签之间的交叉熵损失
             loss_class = criterion_class(y_class, batch_train_labels_class)
+            # 注意:batch_train_labels_class的数只能是标签下标0~num-1,不能超过,必须得映射
+
             loss = loss_cont + loss_class  # 综合,后续看情况可以设置权重进行调节
 
             # 反向传播与优化
@@ -72,17 +78,17 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
             optimizer.step()
 
             train_loss += loss.cpu().item()
-        train_loss = train_loss / len(trainloader)
+        train_loss = train_loss / len(train_loader)
 
-        # 若 testloader 不为 None，则在测试集上计算损失
-        if testloader is None:
+        # 若 test_loader 不为 None，则在测试集上计算损失
+        if test_loader is None:
             print('Train net_x2y for embedding: [epoch %d/%d] train_loss:%f Time:%.4f' %
                   (epoch + 1, epochs, train_loss, timeit.default_timer() - start_tmp))
         else:
             net.eval()  # 设定为评估模式，BatchNorm 使用移动平均
             with torch.no_grad():
                 test_loss = 0
-                for batch_test_images, batch_test_labels_cont, batch_test_labels_class in testloader:
+                for batch_test_images, batch_test_labels_cont, batch_test_labels_class in test_loader:
                     batch_test_images = batch_test_images.type(torch.float).to(device)
                     batch_test_labels_cont = batch_test_labels_cont.type(
                             torch.float).view(-1, 1).to(device)
@@ -92,16 +98,15 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
                     loss_class = criterion_class(y_class, batch_test_labels_class)
                     loss = loss_cont + loss_class
                     test_loss += loss.cpu().item()
-                test_loss = test_loss / len(testloader)
+                test_loss = test_loss / len(test_loader)
                 print('Train net_x2y for label embedding: [epoch %d/%d] '
                       'train_loss:%f test_loss:%f Time:%.4f' %
                       (epoch + 1, epochs, train_loss, test_loss,
                        timeit.default_timer() - start_tmp))
 
         # 保存 checkpoint：每 50 个 epoch 或最后一个 epoch 保存一次模型
-        if path_to_ckpt is not None and (((epoch + 1) % 50 == 0) or (epoch + 1 == epochs)):
-            save_file = path_to_ckpt + "/embed_x2y_ckpt_in_train/embed_x2y_checkpoint_epoch_{}.pth".format(
-                    epoch + 1)
+        if ((epoch + 1) % 50 == 0) or (epoch + 1 == epochs):
+            save_file = path_to_ckpt + "/embed_x2y_checkpoint_epoch_{}.pth".format(epoch + 1)
             os.makedirs(os.path.dirname(save_file), exist_ok=True)
             torch.save({
                 'epoch': epoch,
@@ -115,7 +120,7 @@ def train_net_embed(net, trainloader, testloader, epochs=200, resume_epoch=0,
 ###################################################################################
 # 数据集类：返回连续标签和离散标签
 ###################################################################################
-class label_dataset(torch.utils.data.Dataset):
+class LabelDataset(torch.utils.data.Dataset):
     """
     自定义标签数据集，用于训练标签映射网络（net_y2h）。
 
@@ -125,7 +130,7 @@ class label_dataset(torch.utils.data.Dataset):
     """
 
     def __init__(self, cont_labels, class_labels):
-        super(label_dataset, self).__init__()
+        super(LabelDataset, self).__init__()
         self.cont_labels = np.array(cont_labels).astype(np.float32)
         self.class_labels = np.array(class_labels).astype(np.int64)
         assert len(self.cont_labels) == len(self.class_labels)
@@ -145,7 +150,10 @@ class label_dataset(torch.utils.data.Dataset):
 # 训练标签映射网络（net_y2h）的新版本
 ###################################################################################
 def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_base=0.01,
-        lr_decay_factor=0.1, lr_decay_epochs=[150, 250, 350], weight_decay=1e-4, batch_size=128):
+        lr_decay_factor=0.1, lr_decay_epochs=None, weight_decay=1e-4, batch_size=128):
+    if lr_decay_epochs is None:
+        lr_decay_epochs = [150, 250, 350]
+
     # 内部函数：调整学习率
     def adjust_learning_rate_2(optimizer, epoch):
         """根据 lr_decay_epochs 列表中的设定降低学习率。"""
@@ -161,8 +169,9 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
     assert np.max(cont_labels) <= 1 and np.min(cont_labels) >= 0
 
     # 构造标签数据集，返回 (连续标签, 离散标签)
-    trainset = label_dataset(cont_labels, class_labels)
-    trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size, shuffle=True)
+    train_set = LabelDataset(cont_labels, class_labels)
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True,
+                                               num_workers=cfg.num_workers)
 
     net_embed.eval()  # 固定 net_embed，不更新参数
     # 从 net_embed 中获取两个分支：用于重构连续标签和离散标签
@@ -181,7 +190,7 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
         net_y2h.train()
         train_loss = 0
         adjust_learning_rate_2(optimizer_y2h, epoch)
-        for _, (batch_labels_cont, batch_labels_class) in enumerate(trainloader):
+        for _, (batch_labels_cont, batch_labels_class) in enumerate(train_loader):
             # 将连续标签转换为 float 型，形状 (batch_size, 1)
             batch_labels_cont = batch_labels_cont.type(torch.float).view(-1, 1).to(device)
             # 将离散标签转换为 long 型，形状 (batch_size,)
@@ -213,8 +222,12 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
             optimizer_y2h.step()
 
             train_loss += loss.cpu().item()
-        train_loss = train_loss / len(trainloader)
+        train_loss = train_loss / len(train_loader)
 
         print('Train net_y2h: [epoch %d/%d] train_loss:%f Time:%.4f' %
               (epoch + 1, epochs, train_loss, timeit.default_timer() - start_tmp))
+        if get_s1():
+            print("Receive a specific signal, break early.")
+            switch_s1()
+            break
     return net_y2h
