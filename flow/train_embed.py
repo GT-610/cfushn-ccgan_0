@@ -9,7 +9,7 @@ from config import cfg
 from utils.ipc_util import get_s1, switch_s1
 
 device = cfg.device
-rng = cfg.device
+np_rng = np.random.default_rng(cfg.seed)
 
 
 def train_net_embed(net, train_loader, test_loader, epochs=200, resume_epoch=0,
