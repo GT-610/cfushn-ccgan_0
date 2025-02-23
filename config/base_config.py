@@ -70,24 +70,31 @@ class BaseConfig(BaseModel):
     # 采样
     nrow: int = 20  # 采样图像网格的行数
     samp_batch_size: int = 200  # 采样时的 batch size
-    n_fake_per_label: int = 1000  # 每个标签生成多少张图像
 
     # 评估
+    pretrained_ae_pth: str = "ckpt_AE_epoch_200_seed_2020_CVMode_False.pth"
+    pretrained_cnn4cont_pth: str = "ckpt_PreCNNForEvalGANs_ResNet34_class_epoch_200_seed_2020_classify_5_races_CVMode_False.pth"
+    pretrained_cnn4class_pth: str = "ckpt_PreCNNForEvalGANs_ResNet34_regre_epoch_200_seed_2020_CVMode_False.pth"
+    n_fake_per_label: int = 200  # 每个连续标签(整数)生成多少张图像用于评估
+    epoch_ae: int = 200
     comp_fid: bool = False  # 是否计算 FID 分数
     epoch_fid_cnn: int = 200  # 计算 FID 时使用的 CNN 训练 Epoch
     fid_radius: int = 0  # FID 计算时的邻域半径
-    dump_fake_for_niqe: bool = False  # 是否导出用于 NIQE 计算的图像
+    dump_fake_for_niqe: bool = True  # 是否导出用于 NIQE 计算的图像
     comp_is_and_fid_only: bool = False  # 是否只计算 IS 和 FID（减少计算量）
 
     # 目录路径
     @property
-    def data_path(self) -> str: return f"{self.root_path}/data"
+    def data_path(self) -> str:
+        return f"{self.root_path}/data"
 
     @property
-    def torch_model_path(self) -> str: return f"{self.root_path}/pretrained"  # PyTorch 预训练模型路径
+    def torch_model_path(self) -> str:
+        return f"{self.root_path}/pretrained"  # PyTorch 预训练模型路径
 
     @property
-    def eval_path(self) -> str: return f"{self.torch_model_path}/eval"
+    def eval_path(self) -> str:
+        return f"{self.torch_model_path}/eval/{self.dataset_name}"
 
     @property
     def output_path(self) -> str:
@@ -104,7 +111,24 @@ class BaseConfig(BaseModel):
 
     @property
     def niqe_dump_path(self) -> str:  # NIQE 计算的伪造数据存储路径
-        return f"{self.root_path}/NIQE_{self.img_size}x{self.img_size}/fake_data"
+        # return f"{self.output_path}/NIQE_{self.img_size}x{self.img_size}"
+        return f"{self.gan_output_path}/saved_images/fake_images"
+
+    def pretty_str(self) -> str:
+        """一行一行打印参数"""
+        pretty = ""
+        # for key, value in self.__dict__.items():
+        #     pretty += (f"{key}: {value}\n" if key != "_instance" else "")
+        # 上面的方法无法保证属性是有序输出的
+        for key in self.__annotations__.keys():
+            pretty += (f"{key}: {getattr(self, key)}\n" if key != "_instance" else "")
+        pretty += f"data_path: {self.data_path}\n"
+        pretty += f"torch_model_path: {self.torch_model_path}\n"
+        pretty += f"eval_path: {self.eval_path}\n"
+        pretty += f"output_path: {self.output_path}\n"
+        pretty += f"gan_output_path: {self.gan_output_path}\n"
+        pretty += f"niqe_dump_path: {self.niqe_dump_path}"
+        return pretty
 
     ## 单例模式
     ## 法一,使用__new__实现

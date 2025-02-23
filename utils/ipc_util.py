@@ -11,7 +11,7 @@ __s1 = 0  # 对应SIGUSR1 = 10
 __s2 = 0  # 对应SIGUSR2 = 12
 
 
-def __signal_handler__(signum, frame):
+def _signal_handler(signum, frame):
     global __s1, __s2
     if signum == signal.SIGUSR1:
         __s1 = 1 - __s1  # 在0,1之间switch
@@ -23,8 +23,8 @@ def __signal_handler__(signum, frame):
 
 def register_signal_handler():
     """注册用户自定义signal_handler,在接收信号时触发触发对应信号量的自定义操作"""
-    signal.signal(signal.SIGUSR1, __signal_handler__)
-    signal.signal(signal.SIGUSR2, __signal_handler__)
+    signal.signal(signal.SIGUSR1, _signal_handler)
+    signal.signal(signal.SIGUSR2, _signal_handler)
 
 
 def get_s1():
@@ -37,18 +37,20 @@ def get_s2():
     return __s2
 
 
-def switch_s1():
+def switch_s1(num):
     """对应信号:SIGUSR1 = 10"""
+    assert num == 0 or num == 1
     global __s1
-    __s1 = 1 - __s1  # 在0,1之间switch
-    print(f"================== use func to switch s1 to {__s1} ==================")
+    __s1 = num
+    print(f"=================== use func to switch s1 to {__s1} ====================")
 
 
-def switch_s2():
+def switch_s2(num):
     """对应信号:SIGUSR2 = 12"""
+    assert num == 0 or num == 1
     global __s2
-    __s2 = 1 - __s2  # 在0,1之间switch
-    print(f"================== use func to switch s2 to {__s2} ==================")
+    __s2 = num
+    print(f"=================== use func to switch s2 to {__s2} ====================")
 
 
 if __name__ == "__main__":

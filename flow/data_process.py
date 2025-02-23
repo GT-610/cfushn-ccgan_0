@@ -8,6 +8,7 @@ from utils.data_util import get_distribution_table, show_class_labels_map
 from utils.utils import *
 
 device = cfg.device
+np_rng = np.random.default_rng(cfg.seed)
 
 
 def data_process():
@@ -68,13 +69,8 @@ def data_process():
     num_log_final = []
     for i in range(cfg.num_classes):
         for j in tqdm(range(len(unique_cont_labels))):
-            '''
-            在 NumPy 中，如果要在布尔索引表达式里同时满足两个条件（如 class_labels == something
-            并且 cont_labels == something_else），不能直接使用 and，因为它只适用于单个布尔值；
-            对布尔数组应当用位运算符 & (注意: &优先级较高, 此处,两侧表达式必须用括号括起来)
-            '''
             index_arr = np.where((class_labels == unique_class_labels[i])
-                                 & (cont_labels == unique_cont_labels[j]))[0]
+                                 * (cont_labels == unique_cont_labels[j]))[0]
             num_log.append(len(index_arr))
             # todo: 有可能某些标签组合是缺数据的,待处理
             # assert len(index_arr) != 0, ""
@@ -86,7 +82,7 @@ def data_process():
                 num_log_final.append(0)
             elif len(index_arr) > cfg.max_img_num_per_label:
                 # 如果当前标签样本数量过多，则随机保留指定数量,去除多余的
-                np.random.shuffle(index_arr)
+                np_rng.shuffle(index_arr)
                 index_arr = index_arr[0:cfg.max_img_num_per_label]
                 keep_index_arr_arr.append(index_arr)
                 num_log_final.append(cfg.max_img_num_per_label)
@@ -96,7 +92,7 @@ def data_process():
                 keep_index_arr_arr.append(index_arr)
                 # 然后随机从当前样本中复制缺少的数量（允许重复）
                 num_less = cfg.min_img_num_per_label - len(index_arr)
-                index_replica_arr = np.random.choice(index_arr, size=num_less, replace=True)
+                index_replica_arr = np_rng.choice(index_arr, size=num_less, replace=True)
                 replica_index_arr_arr.append(index_replica_arr)
                 num_log_final.append(cfg.min_img_num_per_label)
             else:

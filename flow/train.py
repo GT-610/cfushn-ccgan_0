@@ -6,6 +6,7 @@ from .train_ccgan import train_ccgan
 from .train_embed import *
 
 device = cfg.device
+np_rng = np.random.default_rng(cfg.seed)
 
 
 def train_process(data):
@@ -159,13 +160,13 @@ def test_embed(net_embed, net_y2h, cont_labels):
     # 从连续标签中随机选择 10 个用于测试映射效果
     unique_cont_labels_norm = np.sort(np.array(list(set(cont_labels))))
     index_tmp = np.arange(len(unique_cont_labels_norm))
-    np.random.shuffle(index_tmp)
+    np_rng.shuffle(index_tmp)
     index_tmp = index_tmp[:10]  # 60个唯一标签索引打乱后,取前10个
     # labels_tmp: 形状 (10, 1)，注意这里连续标签已经归一化到 [0,1]
     labels_tmp = unique_cont_labels_norm[index_tmp].reshape(-1, 1)
     labels_tmp = torch.from_numpy(labels_tmp).type(torch.float).to(device)
     # 添加噪声，模拟连续标签的不确定性
-    epsilons_tmp = np.random.normal(0, 0.2, len(labels_tmp))
+    epsilons_tmp = np_rng.normal(0, 0.2, len(labels_tmp))
     epsilons_tmp = torch.from_numpy(epsilons_tmp).view(-1, 1).type(torch.float).to(device)
     labels_noise_tmp = torch.clamp(labels_tmp + epsilons_tmp, 0.0, 1.0)
 

@@ -9,6 +9,7 @@ from config import cfg
 from utils.ipc_util import get_s1, switch_s1
 
 device = cfg.device
+rng = cfg.device
 
 
 def train_net_embed(net, train_loader, test_loader, epochs=200, resume_epoch=0,
@@ -198,7 +199,7 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
 
             # 为连续标签添加噪声，噪声服从 N(0, 0.2)
             batch_size_curr = batch_labels_cont.size(0)
-            batch_gamma = np.random.normal(0, 0.2, batch_size_curr)
+            batch_gamma = np_rng.normal(0, 0.2, batch_size_curr)
             batch_gamma = torch.from_numpy(batch_gamma).view(-1, 1).type(torch.float).to(device)
             # 加噪后的连续标签，并 clamp 到 [0,1]
             batch_labels_cont_noise = torch.clamp(batch_labels_cont + batch_gamma, 0.0, 1.0)
@@ -227,7 +228,7 @@ def train_net_y2h(cont_labels, class_labels, net_y2h, net_embed, epochs=500, lr_
         print('Train net_y2h: [epoch %d/%d] train_loss:%f Time:%.4f' %
               (epoch + 1, epochs, train_loss, timeit.default_timer() - start_tmp))
         if get_s1():
-            print("Receive a specific signal, break early.")
-            switch_s1()
+            print("Received a specific signal, break early.")
+            switch_s1(0)
             break
     return net_y2h

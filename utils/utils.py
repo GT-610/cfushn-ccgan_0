@@ -181,10 +181,10 @@ def predict_class_labels(net, images, batch_size=500, verbose=False, num_workers
         if verbose:
             pb = SimpleProgressBar()
         for batch_idx, batch_images in enumerate(dataloader_pred):
-            batch_images = batch_images.type(torch.float).to(net.device)
+            batch_images = batch_images.type(torch.float).to(device=next(net.parameters()).device)
             batch_size_curr = len(batch_images)
             # 这里调用 net(batch_images) 得到的是一个三元组，取第二个元素 y_class
-            _, y_class, _ = net(batch_images)
+            y_class, _ = net(batch_images)
             # 对 y_class（预测的类别 logits）计算 softmax 后取最大值的索引
             _, batch_class_labels_pred = torch.max(y_class.data, 1)
             # 将预测结果保存到数组中

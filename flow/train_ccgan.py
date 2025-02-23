@@ -5,7 +5,6 @@
 # @Software: PyCharm
 import os
 import re
-import sys
 import timeit
 import warnings
 
@@ -16,10 +15,11 @@ from torchvision.utils import save_image
 from config import cfg
 from utils.DiffAugment_pytorch import DiffAugment
 from utils.img_util import img_with_sep
-from utils.ipc_util import get_s2, get_s1, switch_s1
+from utils.ipc_util import get_s2, get_s1, switch_s1, switch_s2
 from utils.utils import normalize_images, hflip_images
 
 device = cfg.device
+np_rng = np.random.default_rng(cfg.seed)
 
 
 def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, netD, net_y2h,
@@ -119,15 +119,15 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             # 梯度累积（多步更新平均梯度）
             for _ in range(cfg.num_grad_acc_d):
                 # 从连续标签(唯一)中随机采样 batch_size 个标签
-                batch_cont_labels = np.random.choice(unique_cont_labels, size=cfg.batch_size_d,
-                                                     replace=True)
+                batch_cont_labels = np_rng.choice(unique_cont_labels, size=cfg.batch_size_d,
+                                                  replace=True)
                 # 类别标签不再进行抽取,因为后续选出真实样本后,三者(img,cont,class)需要对应上
                 # 具体流程:先对当前连续标签加噪再进行邻域操作,然后在邻域内随机选一个真实样本
                 # (假设不同类别的样本在各个连续标签都很充足, 在每次的邻域择取中出现的概率差不多)
                 # batch_class_labels = np.zeros(batch_size_d)
 
                 # 对连续标签加噪：对每个标签加上 Gaussian 噪声，模拟公式中的 y_target + ε
-                batch_epsilons = np.random.normal(0, kernel_sigma, cfg.batch_size_d)
+                batch_epsilons = np_rng.normal(0, kernel_sigma, cfg.batch_size_d)
                 batch_cont_labels_e = batch_cont_labels + batch_epsilons
 
                 # 初始化数组：存放选中的真实样本索引,以及随机取到的假标签(连续)
@@ -148,7 +148,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
                     # 如果当前目标标签在训练集中无对应邻域样本，则重新采样（保证至少1个样本）
                     while len(index_real_in_vicinity) < 1:
-                        batch_epsilons_j = np.random.normal(0, kernel_sigma, 1)
+                        batch_epsilons_j = np_rng.normal(0, kernel_sigma, 1)
                         batch_cont_labels_e[j] = batch_cont_labels[j] + batch_epsilons_j
                         if clip_label:
                             batch_cont_labels_e = np.clip(batch_cont_labels_e, 0.0, 1.0)
@@ -161,7 +161,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                                     <= -np.log(cfg.nonzero_soft_weight_threshold) / kappa)[0]
 
                     # 随机从邻域内选取一个真实样本的索引（对应于利用邻域内样本联合估计条件分布）
-                    batch_real_index[j] = np.random.choice(index_real_in_vicinity, size=1)[0]
+                    batch_real_index[j] = np_rng.choice(index_real_in_vicinity, size=1)[0]
 
                     # 为生成器生成假标签：在目标标签邻域内均匀采样
                     if cfg.threshold_type == "hard":
@@ -178,7 +178,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                     ub = min(ub, 1.0)
                     assert lb <= ub and ub >= 0 and lb <= 1
                     # 在lb~ub的均匀分布中, 生成size=1的采样结果, 取结果数组的首个
-                    batch_fake_cont_labels[j] = np.random.uniform(lb, ub, size=1)[0]
+                    batch_fake_cont_labels[j] = np_rng.uniform(lb, ub, size=1)[0]
 
                     # end for j
 
@@ -266,14 +266,14 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
         for _ in range(cfg.num_grad_acc_g):
             # 随机采样连续标签并加噪（标签加噪机制）
-            batch_cont_labels = np.random.choice(unique_cont_labels, size=cfg.batch_size_g,
-                                                 replace=True)
-            batch_epsilons = np.random.normal(0, kernel_sigma, cfg.batch_size_g)
+            batch_cont_labels = np_rng.choice(unique_cont_labels, size=cfg.batch_size_g,
+                                              replace=True)
+            batch_epsilons = np_rng.normal(0, kernel_sigma, cfg.batch_size_g)
             batch_cont_labels_e = batch_cont_labels + batch_epsilons
             batch_cont_labels_e = torch.from_numpy(batch_cont_labels_e).type(torch.float).to(device)
             # 随机采样类别标签
-            batch_class_labels = np.random.choice(unique_class_labels, size=cfg.batch_size_g,
-                                                  replace=True)
+            batch_class_labels = np_rng.choice(unique_class_labels, size=cfg.batch_size_g,
+                                               replace=True)
             batch_class_labels = torch.from_numpy(batch_class_labels).type(torch.long).to(device)
 
             # 生成假图像，条件输入经过 net_y2h 映射
@@ -323,14 +323,15 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             # 加个锁更好 todo
             if get_s1():
                 print(f"take a sample. iter {niter + 1}.")
-                switch_s1()
+                switch_s1(0)
 
-        # 立即保存模型并退出
+        # 接收到"12"信号,立即保存模型一次并重置信号量
         if get_s2():
-            print(f"========== Custom exit signal detected, saving ckpt{niter + 1}... ==========")
+            print(f"saving ckpt {niter + 1}...")
             save_model(ckpts_in_train_folder, niter, netG, netD, optimizerG, optimizerD,
                        torch.get_rng_state())
-            sys.exit("============== save successfully, exit. ==============")
+            print("save successfully.")
+            switch_s2(0)
         # 正常保存模型 checkpoint
         if (niter + 1) % cfg.save_n_iters_freq == 0 or (niter + 1) == cfg.n_iters:
             save_model(ckpts_in_train_folder, niter, netG, netD, optimizerG, optimizerD,
