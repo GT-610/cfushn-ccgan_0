@@ -13,7 +13,7 @@ class BaseConfig(BaseModel):
     # 数据集相关
     dataset_name: str = "UTKFace"  # 数据集名称, eg：UTKFace, RC-49
     image_set_h5_key: str = "images"  # 图片集在h5中的字典key
-    cont_label_h5_key: str = "label"  # 连续标签在h5中的字典key eg: label (UTKFace)
+    cont_label_h5_key: str = "labels"  # 连续标签在h5中的字典key eg: label (UTKFace)
     class_label_h5_key: str = "races"  # 离散标签在h5中的字典key eg: races (UTKFace),races (RC-49)
     num_classes: int = 5  # 类别数量（离散标签）# !类别数是对于一个数据集而言是固定的! 测试和验证集都不能越界!
     img_size: int = 64  # 宽=高=img_size
