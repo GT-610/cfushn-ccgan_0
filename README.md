@@ -18,5 +18,5 @@ https://github.com/UBCDingXin/improved_CcGAN
 
 - 20250301, 可行性 ✓
 
-  但是除DIversity指标有所提升, 其他指标均有下降, 原因是数据集不满足要求, 下一步考虑使用blender渲染更多图片以训练
+  但是除Diversity指标有所提升, 其他指标均有下降, 原因是数据集不满足要求, 下一步考虑使用blender渲染更多图片以训练
 
