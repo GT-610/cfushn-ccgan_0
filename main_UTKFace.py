@@ -27,7 +27,7 @@ cfg.epoch_cnn_embed = 200
 cfg.epoch_net_y2h = 500
 
 # 评估相关
-cfg.comp_fid = True
+cfg.if_eval = True
 cfg.dump_fake_for_niqe = False  # 是否导出用于 NIQE 计算的图像
 cfg.comp_is_and_fid_only = False  # 是否只计算 IS 和 FID（减少计算量）
 cfg.n_fake_per_label = 1000  # 每个连续标签(整数)生成多少张图像用于评估

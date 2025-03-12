@@ -13,14 +13,8 @@ import torch
 def fn_norm_labels(labels, max_label):
     """
     将未归一化的标签转换到 [0,1] 区间
-
-    参数:
-        labels (np.ndarray): 原始标签数组
-
-    返回:
-        np.ndarray: 归一化后的标签数组（除以 args.max_label）
     """
-    return labels / max_label
+    return labels / np.array(max_label)
 
 
 def fn_denorm_labels(labels, max_label):

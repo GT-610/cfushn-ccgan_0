@@ -56,7 +56,7 @@ def train_process(data):
         if cfg.gpu_parallel:
             net_x2y = nn.DataParallel(net_x2y)
         print("Start training CNN for label embedding >>>")
-        net_x2y = train_net_embed(net=net_x2y,
+        net_x2y = train_net_embed(net_x2y=net_x2y,
                                   train_loader=train_loader_embed_net, test_loader=None,
                                   epochs=cfg.epoch_cnn_embed,
                                   resume_epoch=cfg.resume_epoch_cnn_embed,

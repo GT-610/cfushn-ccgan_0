@@ -156,9 +156,9 @@ class ResNetX2Y(nn.Module):
                 nn.ReLU(),
         )
 
-        # 最后输出层,分支1: h2y_cont，将嵌入特征映射到一个标量输出(用于回归标签)
+        # 最后输出层,分支1: h2y_cont，将嵌入特征映射到cont_dim个标量输出(对应cont_dim个回归标签)
         self.h2y_cont = nn.Sequential(
-                nn.Linear(dim_embed, 1),
+                nn.Linear(dim_embed, cfg.cont_dim),
                 nn.ReLU()
                 # 这里默认使用非负回归标签, 训练时候使用均方误差
         )
@@ -207,14 +207,12 @@ class ResNetX2Y(nn.Module):
             features = nn.parallel.data_parallel(self.main, x, range(self.ngpu))
             features = features.view(features.size(0), -1)  # 展平为 (batch_size, 512)
             features = nn.parallel.data_parallel(self.x2h_res, features, range(self.ngpu))
-            # out = nn.parallel.data_parallel(self.h2y, features, range(self.ngpu))
             y_cont = nn.parallel.data_parallel(self.h2y_cont, features, range(self.ngpu))
             y_class = nn.parallel.data_parallel(self.h2y_class, features, range(self.ngpu))
         else:
             features = self.main(x)
             features = features.view(features.size(0), -1)
             features = self.x2h_res(features)
-            # out = self.h2y(features)
             y_cont = self.h2y_cont(features)
             y_class = self.h2y_class(features)
         return y_cont, y_class, features

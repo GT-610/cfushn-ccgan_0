@@ -37,8 +37,12 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
     # --------------------------- 采样准备 ---------------------------
     # 获取所有唯一的训练标签，用于随机采样
-    unique_cont_labels = np.sort(np.array(list(set(cont_labels))))
-    unique_class_labels = np.arange(cfg.num_classes)
+    if cont_labels.ndim == 1:  # (N,)
+        unique_cont_labels = np.sort(np.unique(cont_labels))  # 去重+排序
+    elif cont_labels.ndim == 2:  # (N, dim)
+        unique_cont_labels = np.unique(cont_labels, axis=0)  # 按行去重
+        unique_cont_labels = unique_cont_labels[np.lexsort(unique_cont_labels.T[::-1])]  # 按列排序
+    unique_class_labels = np.arange(cfg.num_classes)  # 对于离散类标签, 只存其索引,便于后续计算交叉熵
 
     nrow = cfg.nrow  # 采样图片每行放多少个格子
     sample_num = nrow * cfg.num_classes  # 每行一个class

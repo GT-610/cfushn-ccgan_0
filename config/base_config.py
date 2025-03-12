@@ -1,10 +1,7 @@
 from datetime import datetime
-from typing import ClassVar
-
-from pydantic import BaseModel
 
 
-class BaseConfig(BaseModel):
+class BaseConfig:
     # 基本配置信息
     version: str = "v" + datetime.now().strftime("%m%d%H")  # 版本号
     device: str = "cuda"
@@ -16,6 +13,7 @@ class BaseConfig(BaseModel):
     cont_label_h5_key: str = "labels"  # 连续标签在h5中的字典key eg: label (UTKFace)
     class_label_h5_key: str = "races"  # 离散标签在h5中的字典key eg: races (UTKFace),races (RC-49)
     num_classes: int = 5  # 类别数量（离散标签）# !类别数是对于一个数据集而言是固定的! 测试和验证集都不能越界!
+    cont_dim: int = 1  # 连续标签的维度(离散标签有几种)
     img_size: int = 64  # 宽=高=img_size
     kernel_sigma: float = -1.0
     kappa: float = -1.0
@@ -32,8 +30,8 @@ class BaseConfig(BaseModel):
     # 数据处理相关
     min_img_num_per_label: int = 0  # 每个标签最少样本数（不足则复制）解决数据不平衡
     max_img_num_per_label: int = 99999  # 每个标签最多样本数（超出则随机删除）解决数据不平衡
-    min_label: float = 1.0  # 连续标签最小值,用于数据筛选与归一化
-    max_label: float = 60.0  # 连续标签最大值,用于数据筛选与归一化
+    min_label: [float] = [0.0]  # 连续标签最小值,用于数据筛选与归一化
+    max_label: [float] = [90.0]  # 连续标签最大值,用于数据筛选与归一化
 
     # 生成器 & 嵌入空间
     dim_gan: int = 256  # 生成器输入噪声的维度
@@ -68,16 +66,16 @@ class BaseConfig(BaseModel):
     policy: str = "translation,cutout"  # 采用的数据增强策略（可选：'color,translation,cutout'）
 
     # 采样
-    nrow: int = 20  # 采样图像网格的行数
+    nrow: int = 20  # 采样图像网格每行多少个 (一个类别一行)
     samp_batch_size: int = 200  # 采样时的 batch size
 
     # 评估
+    if_eval: bool = False  # 是否评估
     pretrained_ae_pth: str = "ckpt_AE_epoch_200_seed_2020_CVMode_False.pth"
     pretrained_cnn4cont_pth: str = "ckpt_PreCNNForEvalGANs_ResNet34_class_epoch_200_seed_2020_classify_5_races_CVMode_False.pth"
     pretrained_cnn4class_pth: str = "ckpt_PreCNNForEvalGANs_ResNet34_regre_epoch_200_seed_2020_CVMode_False.pth"
     n_fake_per_label: int = 200  # 每个连续标签(整数)生成多少张图像用于评估
     epoch_ae: int = 200
-    comp_fid: bool = False  # 是否计算 FID 分数
     epoch_fid_cnn: int = 200  # 计算 FID 时使用的 CNN 训练 Epoch
     fid_radius: int = 0  # FID 计算时的邻域半径
     dump_fake_for_niqe: bool = True  # 是否导出用于 NIQE 计算的图像
@@ -130,38 +128,17 @@ class BaseConfig(BaseModel):
         pretty += f"niqe_dump_path: {self.niqe_dump_path}"
         return pretty
 
-    ## 单例模式
-    ## 法一,使用__new__实现
-    # _instance = None
-    #
-    # def __new__(cls, *args, **kwargs):
-    #     if cls._instance is None:
-    #         cls._instance = super(ConfigModel, cls).__new__(cls)
-    #     return cls._instance
-    ### 上面这个实现会在使用时报错, 原因是__new__ 破坏了 Pydantic 的 BaseModel
-    ### Pydantic 的 BaseModel 依赖 __init__ 进行字段初始化，但 __new__ 只创建对象，并不会调用 __init__
-    ### 这导致 Pydantic 认为 ConfigModel 没有任何字段，访问 version 就会报错
+    # 配置类,采用单例模式
+    _instance = None
 
-    # 法二,使用@classmethod实现单例模式
-    ## 为什么不命名为__instance? 因为如果私密属性,python对其执行“名称重整"为_ConfigModel__instance
-    ## 这样子类就不能直接访问 __instance，如果你想扩展 ConfigModel，会很麻烦!
-    _instance: ClassVar["BaseConfig"] = None  # 确保 `_instance` 不是字段
-
-    @classmethod
-    def instance(cls):
-        """获取单例实例"""
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
-            cls._instance = cls()  # 确保单例
+            cls._instance = super(BaseConfig, cls).__new__(cls)
         return cls._instance
-
-    @classmethod
-    def from_yaml(cls, file_path: str):
-        """从 YAML 加载配置，覆盖默认值"""
-        import yaml
-        with open(file_path, "r") as f:
-            data = yaml.safe_load(f)
-        return cls(**data)
 
 
 # 直接创建默认配置（单例）
-cfg = BaseConfig.instance()
+cfg = BaseConfig.__new__(BaseConfig)
+
+if __name__ == "__main__":
+    print(cfg.pretty_str())
