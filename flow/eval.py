@@ -39,7 +39,7 @@ def sample(netG, net_y2h, cont_labels, class_labels, batch_size=500,
             z = torch.randn(batch_size, cfg.dim_gan, dtype=torch.float).to(device)
             # 获取当前批次的连续标签
             y_cont = torch.from_numpy(fake_cont_labels[n_img_got:(n_img_got + batch_size)]).type(
-                    torch.float).view(-1, 1).to(device)
+                    torch.float).to(device)
             # 获取当前批次的离散标签，转换为 long 型并展平
             y_class = torch.from_numpy(fake_class_labels[n_img_got:(n_img_got + batch_size)]).type(
                     torch.long).view(-1).to(device)
@@ -130,7 +130,7 @@ def evaluate_process(origin_data, netG, net_y2h):
     if cfg.dump_fake_for_niqe:
         print("\n Dumping fake images for NIQE...")
         dump_fake_images_folder = cfg.niqe_dump_path if cfg.niqe_dump_path != "None" \
-            else os.path.join(cfg.gan_output_path, 'saved_images', 'fake_images')
+            else os.path.join(cfg.version_output_path, 'saved_images', 'fake_images')
         os.makedirs(dump_fake_images_folder, exist_ok=True)
         for i in tqdm(range(len(fake_images))):
             # 这里将连续标签反归一化（乘以 max_label）
@@ -225,7 +225,7 @@ def evaluate_process(origin_data, netG, net_y2h):
                 cfg.gan_arch,
                 np.mean(entropies_over_centers), np.std(entropies_over_centers),
                 np.min(entropies_over_centers), np.max(entropies_over_centers)))
-        dump_fid_ls_entropy_over_centers_filename = os.path.join(cfg.gan_output_path,
+        dump_fid_ls_entropy_over_centers_filename = os.path.join(cfg.version_output_path,
                                                                  'fid_ls_entropy_over_centers')
         np.savez(dump_fid_ls_entropy_over_centers_filename, fids=FID_over_centers,
                  labelscores=label_scores_over_centers,
@@ -249,7 +249,7 @@ def evaluate_process(origin_data, netG, net_y2h):
         print(f"\n {cfg.gan_arch}: overall LS of {n_fake_all} "
               f"fake images: {ls_mean_overall:.3f}({ls_std_overall:.3f}).")
         eval_results_logging_fullpath = os.path.join(
-                cfg.gan_output_path, f'eval_results_{cfg.gan_arch}.txt')
+                cfg.version_output_path, f'eval_results_{cfg.gan_arch}.txt')
         if not os.path.isfile(eval_results_logging_fullpath):
             with open(eval_results_logging_fullpath, "w") as eval_txt:
                 eval_txt.write("")

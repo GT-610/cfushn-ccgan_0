@@ -9,7 +9,7 @@ from flow import process_flow
 
 # torch.cuda.set_device(0)  # 设置当前 GPU 设备为 0 (如不指定,默认并行)
 
-# cfg.version = "v022117"  # 固定版本
+# cfg.version = "v022117"  # 固定版本123
 cfg.dataset_name = "RC-49_filtered"  # 原数据集图片量过大,筛选后另置一个数据集
 cfg.class_label_h5_key = "types"
 cfg.img_size = 64
@@ -17,13 +17,13 @@ cfg.img_size = 64
 # 但是要注意,数据集中存储的0~49,其中缺6,这些应视作类别标签, 而非类别标签索引! 计算交叉熵时候必须用索引!
 # 为了简化实验,仅在数据处理时打印一下标签与索引对应关系,后续的class_labels存储的都是索引!
 cfg.num_classes = 49
-cfg.min_label = 0.0  # scoping 0~90度的数据,用于数据筛选与归一化
-cfg.max_label = 90.0  # scoping 0~90度的数据,用于数据筛选与归一化
+cfg.min_label = [0.0]  # scoping 0~90度的数据,用于数据筛选与归一化
+cfg.max_label = [90.0]  # scoping 0~90度的数据,用于数据筛选与归一化
 cfg.min_img_num_per_label = 5
 cfg.max_img_num_per_label = 9999
 cfg.threshold_type = "soft"
 cfg.loss_type = "hinge"
-cfg.kappa = -2.0
+cfg.kappa = [-2.0]
 
 # 评估相关
 cfg.if_eval = True

@@ -40,20 +40,18 @@ def data_process():
     # cont_labels = cont_labels[select_index_arr]
     # class_labels = class_labels[select_index_arr]
 
-    # 获取标签的唯一有序数组
-    if cont_labels.ndim == 1:  # (N,)
-        unique_cont_labels = np.sort(np.unique(cont_labels))  # 去重+排序
-    elif cont_labels.ndim == 2:  # (N, dim)
-        unique_cont_labels = np.unique(cont_labels, axis=0)  # 按行去重
-        unique_cont_labels = unique_cont_labels[np.lexsort(unique_cont_labels.T[::-1])]  # 按列排序
+    # 确保cont_labels始终为(N,cont_dim)格式,因为numpy会自动把长度=1的维度省略掉
+    # 例如(N,1)会变成(N,),所以要用reshape强制保持二维
+    cont_labels = cont_labels.reshape(len(cont_labels), -1)
+    assert cfg.cont_dim == cont_labels.shape[1], \
+        f"cont_dim{cfg.cont_dim} must be corresponding to the cont_labels{cont_labels.shape[1]}"
     unique_class_labels = np.sort(np.unique(class_labels))
-    assert cfg.num_classes == len(
-        unique_class_labels), f"{cfg.num_classes}!={len(unique_class_labels)}!!"
+    assert cfg.num_classes == len(unique_class_labels), \
+        f"{cfg.num_classes}!={len(unique_class_labels)}!!"
     # 数据集中存储的是类别标签, 而非类别标签索引! 计算交叉熵时候必须用索引!
     # 为了简化实验,仅在数据处理时打印一下对应关系,后续的class_labels存储的都是索引!
     # reverse_label_mapping为{"class_name":class_index}
     reverse_label_mapping = show_class_labels_map(unique_class_labels)
-    unique_class_labels = np.arange(len(unique_class_labels))
     # class_labels转换为类索引数组
     class_labels = [reverse_label_mapping[class_name] for class_name in class_labels]
     class_labels = np.array(class_labels)
@@ -126,43 +124,69 @@ def data_process():
     print(f"Finish replication and deletion, final number of pictures: {len(images)}"
           f"(origin:{len(raw_images)}) \n")
 
-    # --------------------------- 连续标签归一化 ---------------------------
+    # --------------------------- 对连续标签归一化 ---------------------------
     print(f"Range of unNormalized continuous labels: "
-          f"({np.min(cont_labels,axis=0)},{np.max(cont_labels,axis=0)})")
+          f"({np.min(cont_labels, axis=0)},{np.max(cont_labels, axis=0)})")
     # 使用辅助函数对连续标签归一化到 [0,1]（需要传入最大标签值 max_label）
     cont_labels = fn_norm_labels(cont_labels, cfg.max_label)
     print(f"Range of normalized continuous labels: "
-          f"({np.min(cont_labels,axis=0)},{np.max(cont_labels,axis=0)})")
-    # 获取归一化后唯一的连续标签（用于后续分析或训练数据准备）
-    if cont_labels.ndim == 1:  # (N,)
-        unique_cont_labels_norm = np.sort(np.unique(cont_labels))  # 去重+排序
-    elif cont_labels.ndim == 2:  # (N, dim)
-        unique_cont_labels_norm = np.unique(cont_labels, axis=0)  # 按行去重
-        unique_cont_labels_norm = unique_cont_labels_norm[
-            np.lexsort(unique_cont_labels_norm.T[::-1])]  # 按列排序
+          f"({np.min(cont_labels, axis=0)},{np.max(cont_labels, axis=0)})")
     print(f"Unique class labels before adjustment:{np.unique(class_labels)}\n")
 
     # --------------------------- 根据数据统计自动计算 kernel_sigma 与 kappa ---------------------------
-    # 计算kernel_sigma
-    # std_label = np.std(cont_labels)  # 这是cont_labels为(N,)的情况
-    # 这是cont_labels为(N,cont_dim)的情况,每个样本含多个连续标签
-    label_norms = np.linalg.norm(cont_labels, axis=1)  # shape: (N,)
-    std_label = np.std(label_norms)
-    cfg.kernel_sigma = 1.06 * std_label * (len(cont_labels)) ** (-1 / 5)
+    compute_sigma_kappa(cont_labels)
+
+    return [raw_images, raw_cont_labels, raw_class_labels], [images, cont_labels, class_labels]
+
+
+def compute_sigma_kappa(cont_labels) -> None:
+    """
+    计算核函数带宽 kernel_sigma 和邻域参数 kappa
+    适用于 (N, cont_dim) 形状的高维连续标签
+    """
+
+    # --------------------------- 计算 kernel_sigma ---------------------------
+    std_label_per_dim = np.std(cont_labels, axis=0)  # shape: (cont_dim,)
+    cfg.kernel_sigma = 1.06 * std_label_per_dim * (len(cont_labels)) ** (-1 / 5)
     print("Use rule-of-thumb formula to compute kernel_sigma >>>\n"
-          f"The std of {len(cont_labels)} set of labels is {std_label},"
+          f"The std of {len(cont_labels)} labels is {std_label_per_dim},"
           f"so the kernel sigma is {cfg.kernel_sigma}")
 
-    # 计算kappa
-    n_unique = len(unique_cont_labels_norm)
-    diff_list = []
-    for i in range(1, n_unique):
-        diff_list.append(unique_cont_labels_norm[i] - unique_cont_labels_norm[i - 1])
-    kappa_base = np.abs(cfg.kappa) * np.max(np.array(diff_list))
+    # --------------------------- 计算 kappa ---------------------------
+    """
+    对于计算kappa, 应对多维标签, 有两种方案.
+    方案1: kappa也改成相应的多维的, 对每个维度分别计算kappa[d]=max(list_d[diff_dist]),kappa为(d,)
+    方案2: 计算所有标签组成的K近邻树,取每个样本的第二近邻(即除自身外最近者)的距离,然后再取max,这是一个标量
+    这里选择方案1
+    """
+    # 对每个维度分别计算kappa
+    # 直接将cont_labels转换为(N, cont_dim)形状
+    cont_labels_dims = cont_labels.shape[1]  # 获取标签的维度数
+    kappa_values = np.zeros(cont_labels_dims)
+
+    for d in range(cont_labels_dims):
+        # 提取当前维度的所有标签值
+        dim_labels = cont_labels[:, d]
+        # 计算相邻标签之间的差异
+        sorted_labels = np.sort(dim_labels)
+        diff_dist = np.diff(sorted_labels)
+        # 对每个维度计算kappa
+        if len(diff_dist) > 0:
+            kappa_values[d] = np.max(diff_dist)
+        else:
+            kappa_values[d] = 1.0  # 默认值，当只有一个样本时
+
+    kappa_base = np.abs(cfg.kappa) * kappa_values
+
     if cfg.threshold_type == "hard":
         cfg.kappa = kappa_base
     else:
+        # 对于软阈值，需要对每个维度分别计算
         cfg.kappa = 1 / kappa_base ** 2
-    print(f"The kappa is {cfg.kappa}\n")
+        # 防止除0出现无穷大
+        cfg.kappa = np.where(np.isinf(cfg.kappa), 1e6, cfg.kappa)
 
-    return [raw_images, raw_cont_labels, raw_class_labels], [images, cont_labels, class_labels]
+
+
+    print(f"Computed kappa_base: {kappa_base}, Final {cfg.threshold_type} kappa: {cfg.kappa}\n")
+    # 此处的cfg.kappa类型为(cont_dim,), 是numpy.ndarray类型

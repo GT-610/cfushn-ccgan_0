@@ -13,9 +13,27 @@ def train_process(data):
     images, cont_labels, class_labels = data
 
     # -------------------- 确定GAN输出目录 --------------------
-    # 目录名中有变量拼接 (cfg.gan_output_path@property方法能动态get)
-    os.makedirs(cfg.gan_output_path, exist_ok=True)
-    print(f'output_path:{cfg.gan_output_path}\n')
+    # 目录名中有变量拼接
+    os.makedirs(cfg.version_output_path, exist_ok=True)
+    # ps: 这里为了简化实验, 会有参数或代码改动引起的前后不一致隐患
+    print(f'output_path({cfg.version}):{cfg.version_output_path}\n')
+    # 保存本次输出简介(参数,版本号, 时间等)
+    profile_path = os.path.join(cfg.output_path, "version_profile.txt")
+    # # 覆盖同版本号的说明 (先过滤,再写入当前)
+    # if os.path.exists(profile_path):
+    #     with open(profile_path, 'r', encoding='utf-8') as f:
+    #         lines = f.readlines()
+    #     lines = [l for l in lines if not l.lstrip().startswith(cfg.version)]
+    #     with open(profile_path, 'w', encoding='utf-8') as f:
+    #         f.writelines(lines)  # 重新写入过滤后的内容
+    with open(profile_path, 'a', encoding='utf-8') as f:
+        f.write(f'{cfg.version}: '
+                f'CcGAN_{cfg.gan_arch}_{cfg.threshold_type}'
+                f'_si{"_".join(map(lambda x: f"{x:.3f}", cfg.kernel_sigma))}'
+                f'_ka{"_".join(map(lambda x: f"{x:.3f}", cfg.kappa))}'
+                f'_{cfg.loss_type}_nDs{cfg.num_d_steps}'
+                f'_nDa{cfg.num_grad_acc_d}_nGa{cfg.num_grad_acc_g}'
+                f'_Dbs{cfg.batch_size_d}_Gbs{cfg.batch_size_g}_{cfg.version}\n')
 
     # -------------------- 构建训练集和 DataLoader --------------------
     # 这里假设 ImgsDataset 类已经支持同时接受三个参数：图像、连续标签、离散标签，并自动归一化图像
@@ -96,11 +114,11 @@ def train_process(data):
     #######################################################################################
     '''                                    GAN training                                 '''
     #######################################################################################
-    print("CcGAN: {}, {}, Sigma is {:.4f}, Kappa is {:.4f}.".format(
-            cfg.gan_arch, cfg.threshold_type, cfg.kernel_sigma, cfg.kappa))
-    save_models_folder = os.path.join(cfg.gan_output_path, 'saved_models')
+    print("CcGAN: {}, {}, Sigma is {}, Kappa is {}.".format(
+            cfg.gan_arch, cfg.threshold_type, cfg.kernel_sigma.tolist(), cfg.kappa.tolist()))
+    save_models_folder = os.path.join(cfg.version_output_path, 'saved_models')
     os.makedirs(save_models_folder, exist_ok=True)
-    save_images_folder = os.path.join(cfg.gan_output_path, 'saved_images')
+    save_images_folder = os.path.join(cfg.version_output_path, 'saved_images')
     os.makedirs(save_images_folder, exist_ok=True)
     ckpts_in_train_folder = os.path.join(save_models_folder, 'ckpts_in_train')
     os.makedirs(ckpts_in_train_folder, exist_ok=True)
@@ -158,19 +176,24 @@ def test_embed(net_embed, net_y2h, cont_labels):
     net_embed.eval()
     net_y2h.eval()
     # 从连续标签中随机选择 10 个用于测试映射效果
-    unique_cont_labels_norm = np.sort(np.array(list(set(cont_labels))))
+    unique_cont_labels_norm = None
+    if cont_labels.ndim == 1:  # (N,)
+        unique_cont_labels_norm = np.sort(np.unique(cont_labels))  # 去重+排序
+    elif cont_labels.ndim == 2:  # (N, dim)
+        unique_cont_labels_norm = np.unique(cont_labels, axis=0)  # 按行去重
+        unique_cont_labels_norm = unique_cont_labels_norm[
+            np.lexsort(unique_cont_labels_norm.T[::-1])]  # 按列排序
     index_tmp = np.arange(len(unique_cont_labels_norm))
     np_rng.shuffle(index_tmp)
-    index_tmp = index_tmp[:10]  # 60个唯一标签索引打乱后,取前10个
-    # labels_tmp: 形状 (10, 1)，注意这里连续标签已经归一化到 [0,1]
-    labels_tmp = unique_cont_labels_norm[index_tmp].reshape(-1, 1)
+    index_tmp = index_tmp[:10]  # 打乱后,取前10个
+    labels_tmp = unique_cont_labels_norm[index_tmp].reshape(-1, cfg.cont_dim)
     labels_tmp = torch.from_numpy(labels_tmp).type(torch.float).to(device)
     # 添加噪声，模拟连续标签的不确定性
-    epsilons_tmp = np_rng.normal(0, 0.2, len(labels_tmp))
-    epsilons_tmp = torch.from_numpy(epsilons_tmp).view(-1, 1).type(torch.float).to(device)
+    epsilons_tmp = np_rng.normal(0, 0.2, labels_tmp.shape)
+    epsilons_tmp = torch.from_numpy(epsilons_tmp).type(torch.float).to(device)
     labels_noise_tmp = torch.clamp(labels_tmp + epsilons_tmp, 0.0, 1.0)
 
-    # 对于离散标签测试，选择一个固定的类别，例如 2（假设类别取值为 0~4）
+    # 对于离散标签测试，选择一个固定的类别，例如 2
     fixed_class = torch.full((labels_tmp.size(0),), 2, dtype=torch.long).to(device)
 
     # 获取预训练好的 net_embed 中的两个输出分支
@@ -180,20 +203,20 @@ def test_embed(net_embed, net_y2h, cont_labels):
         # 将加噪后的连续标签与固定离散标签一起输入 net_y2h，得到联合标签嵌入 h
         h = net_y2h(labels_noise_tmp, fixed_class)
         # 利用连续分支反映射得到重构的连续标签
-        labels_rec_tmp = net_h2y_cont(h).cpu().numpy().reshape(-1, 1)
+        cont_rec_tmp = net_h2y_cont(h).cpu().numpy().reshape(-1, cfg.cont_dim)
         # 利用分类分支得到重构的离散标签 logits
         class_logits = net_h2y_class(h).cpu().numpy()  # 形状 (10, NUM_CLASSES)
 
         # 对连续标签部分不加噪声的原始标签也通过 net_y2h 进行映射重构，作为对比
         h_orig = net_y2h(labels_tmp, fixed_class)
-        labels_rec_orig = net_h2y_cont(h_orig).cpu().numpy().reshape(-1, 1)
+        cont_rec_orig = net_h2y_cont(h_orig).cpu().numpy().reshape(-1, cfg.cont_dim)
 
         # 同时，计算连续标签在加噪前后的差异，用于评估噪声对映射的影响
         labels_tmp_np = labels_tmp.cpu().numpy()
         labels_noise_np = labels_noise_tmp.cpu().numpy()
 
     # 输出测试结果：连续标签重构对比
-    results1 = np.concatenate((labels_tmp_np, labels_rec_orig, labels_rec_tmp), axis=1)
+    results1 = np.concatenate((labels_tmp_np, cont_rec_orig, cont_rec_tmp), axis=1)
     print("Continuous labels vs reconstructed labels:")
     print("Original, Rec (no noise), Rec (with noise)")
     print(results1)

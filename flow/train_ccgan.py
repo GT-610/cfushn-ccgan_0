@@ -37,6 +37,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
 
     # --------------------------- 采样准备 ---------------------------
     # 获取所有唯一的训练标签，用于随机采样
+    unique_cont_labels = None
     if cont_labels.ndim == 1:  # (N,)
         unique_cont_labels = np.sort(np.unique(cont_labels))  # 去重+排序
     elif cont_labels.ndim == 2:  # (N, dim)
@@ -48,23 +49,23 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
     sample_num = nrow * cfg.num_classes  # 每行一个class
     z_fixed = torch.randn(sample_num, cfg.dim_gan, dtype=torch.float).to(device)
     # 根据训练集中的年龄范围（continuous label）选取 10 个等距点 (分位数, eg:q=0.5就是中位数)
-    start_label = np.quantile(cont_labels, 0.05)
-    end_label = np.quantile(cont_labels, 0.95)
-    # 在线性空间中，生成某区间等距分布的num个数
-    selected_cont_labels = np.linspace(start_label, end_label, num=nrow)
+    start_label = np.quantile(cont_labels, 0.05, axis=0)
+    end_label = np.quantile(cont_labels, 0.95, axis=0)
+    # 对每个维度独立插值,生成在每个cont_dim上等距分布的num个数
+    selected_cont_labels = np.linspace(start_label, end_label, num=nrow)  # (nrow, cont_dim)
     selected_class_labels = unique_class_labels  # class类别数不多, 直接全用了
-    y_cont_fixed = np.zeros(sample_num, dtype=np.float32)
+    y_cont_fixed = np.zeros((sample_num, cfg.cont_dim), dtype=np.float32)
     y_class_fixed = np.zeros(sample_num)
     for i in range(cfg.num_classes):
         curr_class_index = selected_class_labels[i]
         for j in range(nrow):
             # 行优先下，网格中第 i 行、第 j 列的整体索引
             idx = i * nrow + j
-            y_cont_fixed[idx] = selected_cont_labels[j]
+            y_cont_fixed[idx] = selected_cont_labels[j]  # (cont_dim,)
             y_class_fixed[idx] = selected_class_labels[curr_class_index]
     print(f"selected cont labels for sample (covering all classes):\n{selected_cont_labels}")
-    y_cont_fixed = torch.from_numpy(y_cont_fixed).type(torch.float).view(-1, 1).to(device)
-    y_class_fixed = torch.from_numpy(y_class_fixed).type(torch.long).view(-1).to(device)
+    y_cont_fixed = torch.from_numpy(y_cont_fixed).type(torch.float).to(device)
+    y_class_fixed = torch.from_numpy(y_class_fixed).type(torch.long).to(device)
 
     # --------------------------- 恢复训练 ---------------------------
     start_iter = 0
@@ -91,7 +92,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             else:
                 warnings.warn(
                         f"{ckpts_in_train_folder} has no optional ckpt. GAN will train from 0")
-                # raise FileNotFoundError(f"there has no matched models in '{ckpts_in_train_folder}'")
+                # raise FileNotFoundError(f"there has no matched models in {ckpts_in_train_folder}")
                 checkpoint_path = None
         else:
             start_iter = cfg.resume_n_iters
@@ -131,38 +132,47 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # batch_class_labels = np.zeros(batch_size_d)
 
                 # 对连续标签加噪：对每个标签加上 Gaussian 噪声，模拟公式中的 y_target + ε
-                batch_epsilons = np_rng.normal(0, kernel_sigma, cfg.batch_size_d)
+                batch_epsilons = np_rng.normal(0, kernel_sigma, batch_cont_labels.shape)
                 batch_cont_labels_e = batch_cont_labels + batch_epsilons
 
                 # 初始化数组：存放选中的真实样本索引,以及随机取到的假标签(连续)
                 batch_real_index = np.zeros(cfg.batch_size_d, dtype=int)
-                batch_fake_cont_labels = np.zeros(cfg.batch_size_d)
+                batch_fake_cont_labels = np.zeros((cfg.batch_size_d, batch_cont_labels.shape[1]))
 
                 for j in range(cfg.batch_size_d):
                     # 对于每个目标标签，寻找其邻域内的真实样本，并生成假标签
                     if cfg.threshold_type == "hard":
-                        # 硬邻域：选择满足 |train_label - target_label| ≤ κ 的样本
-                        index_real_in_vicinity = np.nonzero(
-                                np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa)[0]
+                        # 对于多维标签，需要检查每个维度是否都在kappa范围内
+                        in_vicinity_mask = np.all(
+                                np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa, axis=1)
+                        index_real_in_vicinity = np.nonzero(in_vicinity_mask)[0]
                     else:
-                        # 软邻域：利用逆向条件 (y - target)² ≤ -log(threshold)/κ
+                        # 对于软阈值，计算加权距离并检查是否小于阈值
+                        weighted_distances = np.sum(
+                                (cont_labels - batch_cont_labels_e[j]) ** 2 * kappa, axis=1)
                         index_real_in_vicinity = np.nonzero(
-                                (cont_labels - batch_cont_labels_e[j]) ** 2
-                                <= -np.log(cfg.nonzero_soft_weight_threshold) / kappa)[0]
+                                weighted_distances <= -np.log(cfg.nonzero_soft_weight_threshold))[0]
 
                     # 如果当前目标标签在训练集中无对应邻域样本，则重新采样（保证至少1个样本）
                     while len(index_real_in_vicinity) < 1:
-                        batch_epsilons_j = np_rng.normal(0, kernel_sigma, 1)
+                        # 为什么一直循环一定会有? 在计算kappa时就是按照最大间隔算的,所以
+                        batch_epsilons_j = np_rng.normal(0, kernel_sigma,
+                                                         size=batch_cont_labels.shape[1])
                         batch_cont_labels_e[j] = batch_cont_labels[j] + batch_epsilons_j
                         if clip_label:
                             batch_cont_labels_e = np.clip(batch_cont_labels_e, 0.0, 1.0)
                         if cfg.threshold_type == "hard":
-                            index_real_in_vicinity = np.nonzero(
-                                    np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa)[0]
+                            # 对于多维标签，需要检查每个维度是否都在kappa范围内
+                            in_vicinity_mask = np.all(
+                                    np.abs(cont_labels - batch_cont_labels_e[j]) <= kappa, axis=1)
+                            index_real_in_vicinity = np.nonzero(in_vicinity_mask)[0]
                         else:
+                            # 对于软阈值，计算加权距离并检查是否小于阈值
+                            weighted_distances = np.sum(
+                                    (cont_labels - batch_cont_labels_e[j]) ** 2 * kappa, axis=1)
                             index_real_in_vicinity = np.nonzero(
-                                    (cont_labels - batch_cont_labels_e[j]) ** 2
-                                    <= -np.log(cfg.nonzero_soft_weight_threshold) / kappa)[0]
+                                    weighted_distances <= -np.log(
+                                            cfg.nonzero_soft_weight_threshold))[0]
 
                     # 随机从邻域内选取一个真实样本的索引（对应于利用邻域内样本联合估计条件分布）
                     batch_real_index[j] = np_rng.choice(index_real_in_vicinity, size=1)[0]
@@ -173,18 +183,16 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                         ub = batch_cont_labels_e[j] + kappa
                     else:
                         # 软邻域使用区间 [target - sqrt(-log(threshold)/κ), target + sqrt(-log(threshold)/κ)]
-                        lb = batch_cont_labels_e[j] - np.sqrt(
-                                -np.log(cfg.nonzero_soft_weight_threshold) / kappa)
-                        ub = batch_cont_labels_e[j] + np.sqrt(
-                                -np.log(cfg.nonzero_soft_weight_threshold) / kappa)
-                    # 裁剪一下
-                    lb = max(0.0, lb)
-                    ub = min(ub, 1.0)
-                    assert lb <= ub and ub >= 0 and lb <= 1
-                    # 在lb~ub的均匀分布中, 生成size=1的采样结果, 取结果数组的首个
-                    batch_fake_cont_labels[j] = np_rng.uniform(lb, ub, size=1)[0]
-
-                    # end for j
+                        threshold_term = np.sqrt(-np.log(cfg.nonzero_soft_weight_threshold) / kappa)
+                        lb = batch_cont_labels_e[j] - threshold_term
+                        ub = batch_cont_labels_e[j] + threshold_term
+                    # 逐元素裁剪
+                    lb = np.clip(lb, 0.0, 1.0)  # 形状 (cont_dim,)
+                    ub = np.clip(ub, 0.0, 1.0)  # 形状 (cont_dim,)
+                    assert np.all(lb <= ub) and np.all(ub >= 0) and np.all(lb <= 1)
+                    # 在每个维度的范围内均匀采样
+                    batch_fake_cont_labels[j] = np_rng.uniform(lb, ub, size=lb.shape)  # (cont_dim,)
+                # end for j
 
                 # ---------------------- 获取真实样本 -------------------------
                 # 根据选中的索引，从训练集中抽取真实图像和连续标签，(类别标签没有real/fake之分)
@@ -195,8 +203,8 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 batch_real_labels = cont_labels[batch_real_index]
                 batch_real_labels = torch.from_numpy(batch_real_labels).type(torch.float).to(device)
                 batch_class_labels = class_labels[batch_real_index]
-                batch_class_labels = torch.from_numpy(batch_class_labels).type(torch.long).to(
-                        device)
+                batch_class_labels = (torch.from_numpy(batch_class_labels)
+                                      .type(torch.long).to(device))
 
                 # ---------------------- 生成假样本 ---------------------------
                 # 将生成假标签转换为 tensor，并利用标签嵌入网络 net_y2h（新型回归标签输入机制）
@@ -206,8 +214,8 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 batch_fake_images = netG(z, net_y2h(batch_fake_cont_labels, batch_class_labels))
 
                 # 将目标标签（用于判别器条件输入）转换到 GPU
-                batch_cont_labels_e = torch.from_numpy(batch_cont_labels_e).type(torch.float).to(
-                        device)
+                batch_cont_labels_e = (torch.from_numpy(batch_cont_labels_e)
+                                       .type(torch.float).to(device))
                 # todo: 无法得到与batch_cont_labels_e对应的真实类别标签,只能使用batch_real_labels对应的?
                 # 但是我们可以假设这个假标签对应img的类别=当前真img的类别, 这就是邻域假设
 
@@ -215,10 +223,19 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
                 # 若使用软邻域，权重根据 exp(-kappa*(y - y_target)²) 计算，
                 # 对应公式中软邻域权重 w(y_i, y) = exp(-v*(y_i - y)²)
                 if cfg.threshold_type == "soft":
-                    real_weights = torch.exp(
-                            -kappa * (batch_real_labels - batch_cont_labels_e) ** 2).to(device)
-                    fake_weights = torch.exp(
-                            -kappa * (batch_fake_cont_labels - batch_cont_labels_e) ** 2).to(device)
+                    # 对于多维标签，计算每个维度的权重并相乘
+                    squared_diff_real = (batch_real_labels - batch_cont_labels_e) ** 2
+                    squared_diff_fake = (batch_fake_cont_labels - batch_cont_labels_e) ** 2
+
+                    # 计算加权平方差之和
+                    weighted_squared_diff_real = torch.sum(
+                            squared_diff_real * torch.tensor(kappa, device=device), dim=1)
+                    weighted_squared_diff_fake = torch.sum(
+                            squared_diff_fake * torch.tensor(kappa, device=device), dim=1)
+
+                    # 计算最终权重
+                    real_weights = torch.exp(-weighted_squared_diff_real).to(device)
+                    fake_weights = torch.exp(-weighted_squared_diff_fake).to(device)
                 else:
                     # 硬邻域时，每个样本权重均为1（已隐式在样本筛选中体现）
                     real_weights = torch.ones(cfg.batch_size_d, dtype=torch.float).to(device)
@@ -272,7 +289,7 @@ def train_ccgan(kernel_sigma, kappa, images, cont_labels, class_labels, netG, ne
             # 随机采样连续标签并加噪（标签加噪机制）
             batch_cont_labels = np_rng.choice(unique_cont_labels, size=cfg.batch_size_g,
                                               replace=True)
-            batch_epsilons = np_rng.normal(0, kernel_sigma, cfg.batch_size_g)
+            batch_epsilons = np_rng.normal(0, kernel_sigma, batch_cont_labels.shape)
             batch_cont_labels_e = batch_cont_labels + batch_epsilons
             batch_cont_labels_e = torch.from_numpy(batch_cont_labels_e).type(torch.float).to(device)
             # 随机采样类别标签

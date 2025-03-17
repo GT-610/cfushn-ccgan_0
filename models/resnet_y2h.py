@@ -53,7 +53,7 @@ class ResNetY2H(nn.Module):
         )
 
     def forward(self, y_cont, y_class):
-        # 确保连续标签的形状为 (batch_size, 1)，并加上一个极小值避免数值问题
+        # 加上一个极小值避免数值问题
         y_cont = y_cont.view(-1, cfg.cont_dim) + 1e-8
         # 经过连续分支映射
         cont_feat = self.cont_branch(y_cont)

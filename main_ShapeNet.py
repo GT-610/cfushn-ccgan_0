@@ -9,7 +9,7 @@ from flow import process_flow
 
 # torch.cuda.set_device(0)  # 设置当前 GPU 设备为 0 (如不指定,默认并行)
 
-cfg.version = "v031216"  # 固定版本
+# cfg.version = "v031216"  # 固定版本
 cfg.dataset_name = "ShapeNet"
 cfg.cont_label_h5_key = "labels"
 cfg.class_label_h5_key = "classes"
@@ -26,6 +26,9 @@ cfg.max_img_num_per_label = 9999
 cfg.threshold_type = "soft"
 cfg.loss_type = "hinge"
 cfg.kappa = -2.0
+
+# 训练采样
+cfg.nrow = 40 # 连续坐标有3维,nrow大些多展示点
 
 # 评估相关
 cfg.if_eval = True
