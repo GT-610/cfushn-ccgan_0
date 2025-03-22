@@ -1,3 +1,5 @@
+This is a fork of [cfushn_ccgan](https://github.com/calmplay/cfushn_ccgan). Original repo has been deleted, but I still keep it here for my own study purpose.
+
 原CcGAN (Continuous Conditional GAN) 论文及代码库:
 
 https://arxiv.org/pdf/2011.07466v3
