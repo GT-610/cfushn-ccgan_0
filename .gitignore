@@ -172,3 +172,7 @@ cython_debug/
 /data/
 /output/
 /pretrained/
+
+# Anaconda
+.conda/
+.conda-win/

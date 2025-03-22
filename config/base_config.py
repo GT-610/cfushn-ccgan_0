@@ -5,7 +5,7 @@ class BaseConfig:
     # 基本配置信息
     version = "v" + datetime.now().strftime("%m%d%H")  # 版本号
     device = "cuda"
-    root_path = "/home/cy/workdir/cfushn-ccgan_0"
+    root_path = "./"
 
     # 数据集相关
     dataset_name = "UTKFace"  # 数据集名称, eg：UTKFace, RC-49
@@ -22,7 +22,7 @@ class BaseConfig:
     seed: int = 2025  # 随机种子
     gpu_parallel = True  # 是否使用多 GPU 并行训练(如果指定CUDA_VISIBLE_DEVICES为单个,则该选项无效)
     num_workers: int = 0  # 数据加载时的线程数
-    n_iters: int = 40000  # 训练的总迭代次数
+    n_iters: int = 20000  # 训练的总迭代次数
     resume_n_iters: int = 1  # 训练恢复起始iter (0:从头训练,>0:从指定迭代次数或最新ckpt(若均无,则从头训练))
     save_n_iters_freq: int = 2000  # 模型 checkpoint 的保存频率（迭代步数）
     visualize_freq: int = 500  # 可视化生成图像的频率（迭代步数）
